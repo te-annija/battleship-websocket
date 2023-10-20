@@ -36,4 +36,13 @@ export default class Ship {
     this.hits = 0 // No attacks on the ship initially
     this.position = new ShipPosition()
   }
+
+  /**
+   * Reset the ship position to default one.
+   */
+  cleanData(): void {
+    this.position.row = -1
+    this.position.col = -1
+    this.position.isVertical = false
+  }
 }

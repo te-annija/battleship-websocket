@@ -30,6 +30,19 @@ wss.on('connection', (ws: WebSocket) => {
   // Handle WebSocket messages
   ws.on('message', (data: string) => {
     console.log('received: %s', data)
+
+    const message = JSON.parse(data)
+
+    switch (message.type) {
+      case 'randomize-ships':
+        player.gameboard.placeShipsRandomly()
+        sendPlayerData(ws, player)
+        break
+      case 'reset-ships':
+        player.gameboard.cleanBoard()
+        sendPlayerData(ws, player)
+        break
+    }
   })
 
   // Handle WebSocket disconnects

@@ -9,5 +9,9 @@ module.exports = {
   env: {
     es6: true,
     node: true
+  },
+  rules: {
+    '@typescript-eslint/no-unused-vars': 'error',
+    'no-unused-vars': 'off'
   }
 }

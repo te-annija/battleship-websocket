@@ -5,7 +5,9 @@
 
 import BoardCell from './BoardCell.js'
 import Ship from './Ship.js'
+import ShipPosition from './ShipPosition.js'
 import config from 'config'
+import { BoardCellState } from 'enums/BoardCellState.js'
 
 /**
  * Manage gameboard and game logic.
@@ -47,6 +49,183 @@ export default class Gameboard {
     for (const shipConfig of shipConfigs) {
       for (let i = 0; i < shipConfig.count; i++) {
         this.ships.push(new Ship(shipConfig.name + '-' + i, shipConfig.name, shipConfig.size))
+      }
+    }
+  }
+
+  /**
+   * Places all ships on board in randomized positions.
+   */
+  placeShipsRandomly(): void {
+    this.cleanBoard()
+
+    for (let ship of this.ships) {
+      do {
+        ship.position = this.getRandomStartPosition(ship)
+      } while (!this.placeShip(ship))
+    }
+  }
+
+  /**
+   * Places ship on the grid starting on position if placement is valid.
+   *
+   * @param ship The ship that needs to be added to the grid.
+   * @returns Returns true if ship is placed on board successfully.
+   */
+  placeShip(ship: Ship): boolean {
+    if (!this.isValidPlacement(ship)) {
+      return false
+    }
+    this.saveShipOnGrid(ship)
+    return true
+  }
+
+  /**
+   * Resets all ship positions and cell states on board.
+   */
+  cleanBoard(): void {
+    for (let i = 0; i < this.grid.length; i++) {
+      for (let j = 0; j < this.grid[i].length; j++) {
+        this.grid[i][j].ship = undefined
+        this.grid[i][j].state = BoardCellState.Empty
+      }
+    }
+
+    for (let ship of this.ships) {
+      ship.cleanData()
+    }
+  }
+
+  /**
+   * Determine if the ship placement on the grid would be valid.
+   *
+   * @param ship The ship whose placement on the grid needs to be checked.
+   * @returns Returns true if ship palcement is valid.
+   */
+  private isValidPlacement(ship: Ship): boolean {
+    return this.isShipWithinBoard(ship) && !this.isShipOverlap(ship)
+  }
+
+  /**
+   * Place validated ship on the board by marking occupied cells as 'ship'.
+   * Placement will start at position detemined in position property.
+   *
+   * @param ship The ship that needs to be added to the grid.
+   */
+  private saveShipOnGrid(ship: Ship): void {
+    for (let i = 0; i < ship.size; i++) {
+      const col = ship.position.isVertical ? ship.position.col : ship.position.col + i
+      const row = ship.position.isVertical ? ship.position.row + i : ship.position.row
+
+      if (!this.isCellWithinBoard(row, col)) {
+        continue
+      }
+
+      let cell: BoardCell = this.grid[row][col]
+      cell.state = BoardCellState.Ship
+      cell.ship = ship
+    }
+  }
+
+  /**
+   *  Get random start position on the grid taking into account ship size.
+   *
+   * @param ship The ship that needs to be added to the grid.
+   * @returns The start position on the grid for the ship.
+   */
+  private getRandomStartPosition(ship: Ship): ShipPosition {
+    let position: ShipPosition = new ShipPosition()
+    position.isVertical = Math.random() < 0.5 ? true : false
+
+    const maxRow = position.isVertical ? this.coord_max - ship.size + 1 : this.coord_max
+    const maxCol = position.isVertical ? this.coord_max : this.coord_max - ship.size + 1
+
+    position.row = Math.ceil(Math.random() * maxRow)
+    position.col = Math.ceil(Math.random() * maxCol)
+
+    return position
+  }
+
+  /**
+   * Validates if ship would be within boarders of the grid.
+   *
+   * @param ship The ship whose placement on the board needs to be checked.
+   * @returns Returns true if ship is within borders.
+   */
+  private isShipWithinBoard(ship: Ship): boolean {
+    if (!this.isCellWithinBoard(ship.position.row, ship.position.col)) {
+      return false
+    }
+
+    if (ship.position.isVertical) {
+      return ship.position.row + ship.size - 1 < this.coord_max
+    } else {
+      return ship.position.col + ship.size - 1 < this.coord_max
+    }
+  }
+
+  /**
+   * Validates if cell with row and column index would be within the board.
+   *
+   * @param rowIndex The row index of the grid.
+   * @param colIndex The column index of the grid.
+   * @returns Returns true if cell is within boarders.
+   */
+  private isCellWithinBoard(rowIndex: number, colIndex: number): boolean {
+    return (
+      rowIndex <= this.coord_max &&
+      rowIndex >= this.coord_min &&
+      colIndex <= this.coord_max &&
+      colIndex >= this.coord_min
+    )
+  }
+
+  /**
+   * Checks if ship overlaps or is adjacent to another placed ship.
+   *
+   * @param ship The ship whose surrounding ships need to be checked.
+   * @returns Returns true if ship overlaps another ship.
+   */
+  private isShipOverlap(ship: Ship): boolean {
+    let isOverlap: boolean = false
+    this.iterateAdjacentCells(ship, (offsetRow, offsetCol) => {
+      if (this.grid[offsetRow][offsetCol].ship) {
+        isOverlap = true
+      }
+    })
+    return isOverlap
+  }
+
+  /**
+   * Helper method to iterate thorugh all adjacent cells of the ship including the ship.
+   *
+   * @param ship The ship whose adjacent cells need to be iterated.
+   * @param callback The callback function that executes for all cells that adjacent to the ship.
+   */
+  private iterateAdjacentCells(ship: Ship, callback: (row: number, col: number) => void): void {
+    for (let i = 0; i < ship.size; i++) {
+      const targetRow = ship.position.isVertical ? ship.position.row + i : ship.position.row
+      const targetCol = ship.position.isVertical ? ship.position.col : ship.position.col + i
+
+      const offsets = [
+        { row: 0, col: 0 },
+        { row: 0, col: -1 },
+        { row: 0, col: 1 },
+        { row: -1, col: 0 },
+        { row: 1, col: 0 },
+        { row: 1, col: 1 },
+        { row: 1, col: -1 },
+        { row: -1, col: 1 },
+        { row: -1, col: -1 }
+      ]
+
+      for (const offset of offsets) {
+        const offsetRow = targetRow + offset.row
+        const offsetCol = targetCol + offset.col
+
+        if (this.isCellWithinBoard(offsetRow, offsetCol)) {
+          callback(offsetRow, offsetCol)
+        }
       }
     }
   }

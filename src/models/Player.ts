@@ -18,6 +18,9 @@ export default class Player {
   /** The results of the player's attacks on the enemy's gameboard. */
   enemyGameboard: Gameboard
 
+  /** The time of player last active action to Webserver. */
+  lastActiveTime: number
+
   /**
    * @param id The unique identifier for the player.
    */
@@ -25,5 +28,6 @@ export default class Player {
     this.id = id
     this.gameboard = new Gameboard()
     this.enemyGameboard = new Gameboard()
+    this.lastActiveTime = new Date().getTime()
   }
 }

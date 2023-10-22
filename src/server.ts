@@ -8,59 +8,107 @@ import { WebSocketServer, WebSocket } from 'ws'
 import Player from './models/Player.js'
 import config from 'config'
 
+const serverPort: number = config.has('server.ports') ? config.get('server.ports') : 8080
 const wss: WebSocketServer = new WebSocketServer({
-  port: config.has('server.port') ? config.get('server.port') : 8080
+  port: serverPort
 })
 const players: Map<string, Player> = new Map()
-const connetions: Map<string, WebSocket> = new Map()
+const connections: Map<string, WebSocket> = new Map()
 
 /**
  * Websocket server connection
  */
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws: WebSocket, request) => {
   console.log('A player connected')
 
   // Handle Player initial data
-  let player = createNewPlayer()
-  players.set(player.id, player)
-  connetions.set(player.id, ws)
+  const cookieUid = getUidFromCookies(request.headers.cookie ?? '')
+  const id: string = cookieUid !== '' ? cookieUid : generateRandomString()
+  let player: Player | undefined
 
-  sendPlayerData(ws, player)
+  if (players.has(id)) {
+    // Player is already started session before
+    player = players.get(id)
+    if (player) {
+      sendPlayerData(ws, player)
+      connections.set(id, ws)
+    }
+  } else {
+    // New user session
+    player = new Player(id)
+    sendPlayerData(ws, player)
+    players.set(id, player)
+    connections.set(id, ws)
+  }
 
   // Handle WebSocket messages
   ws.on('message', (data: string) => {
     console.log('received: %s', data)
 
-    const message = JSON.parse(data)
+    if (!player) {
+      return
+    }
 
-    switch (message.type) {
-      case 'randomize-ships':
-        player.gameboard.placeShipsRandomly()
-        sendPlayerData(ws, player)
-        break
-      case 'reset-ships':
-        player.gameboard.cleanBoard()
-        sendPlayerData(ws, player)
-        break
+    player.lastActiveTime = new Date().getTime()
+
+    try {
+      const message = JSON.parse(data)
+      console.log(message)
+      switch (message.type) {
+        case 'randomize-ships':
+          player.gameboard.placeShipsRandomly()
+          sendPlayerData(ws, player)
+          break
+        case 'reset-ships':
+          player.gameboard.cleanBoard()
+          sendPlayerData(ws, player)
+          break
+      }
+    } catch (error) {
+      console.log(error)
     }
   })
 
   // Handle WebSocket disconnects
   ws.on('close', () => {
     console.log('A player disconnected')
-    players.delete(player.id)
-    connetions.delete(player.id)
   })
 })
 
+// Close inactive connections every 5 minutes
+setInterval(closeInactiveConnections, 5 * 60 * 1000)
+
 /**
- * Creates a new player object
- *
- * @returns The player object
+ * Get user ID from the cookie.
+ * @param cookies Cookies from the request header data.
+ * @returns Returns user ID.
  */
-function createNewPlayer(): Player {
-  const playerId = Math.random().toString(36).substring(4)
-  return new Player(playerId)
+function getUidFromCookies(cookies: string): string {
+  const cookieName = 'uid='
+  try {
+    for (const cookie of cookies.split(';')) {
+      if (cookie.indexOf(cookieName) == 0) {
+        return cookie.substring(cookieName.length, cookie.length)
+      }
+    }
+  } catch (error) {
+    console.log(error)
+  }
+  return ''
+}
+
+/**
+ * Return randomly generated string and checks if no user is assigned already.
+ * @returns Randomly generated user ID.
+ */
+function generateRandomString(): string {
+  let playerID = Math.random().toString(36).substring(4)
+
+  while (players.has(playerID)) {
+    playerID = Math.random().toString(36).substring(4)
+  }
+
+  return playerID
 }
 
 /**
@@ -78,4 +126,22 @@ function sendPlayerData(ws: WebSocket, player: Player): void {
       }
     })
   )
+}
+
+/**
+ * Check and close inactive connections if user is not reached Websocket in 15 minutes
+ */
+function closeInactiveConnections() {
+  const currentTime = new Date().getTime()
+  connections.forEach((ws, playerId) => {
+    const player = players.get(playerId)
+    const playerLastActiveTime = player ? player.lastActiveTime : 0
+    const fifteenMin = 15 * 60 * 1000
+    if (currentTime - playerLastActiveTime > fifteenMin) {
+      ws.close()
+      players.delete(playerId)
+      connections.delete(playerId)
+      console.log(`Closed inactive connection for player ${playerId}`)
+    }
+  })
 }

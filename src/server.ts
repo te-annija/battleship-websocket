@@ -6,6 +6,7 @@
 
 import { WebSocketServer, WebSocket } from 'ws'
 import Player from './models/Player.js'
+import Ship from 'models/Ship.js'
 import config from 'config'
 
 const serverPort: number = config.has('server.ports') ? config.get('server.ports') : 8080
@@ -62,6 +63,25 @@ wss.on('connection', (ws: WebSocket, request) => {
         case 'reset-ships':
           player.gameboard.cleanBoard()
           sendPlayerData(ws, player)
+          break
+        case 'place-ship':
+          if (message.data.ship_id && message.data.position) {
+            const ship: Ship | undefined = player.gameboard.getShipById(message.data.ship_id)
+            if (ship) {
+              player.gameboard.placeShip(ship, message.data.position)
+              sendPlayerData(ws, player)
+            }
+          }
+          break
+        case 'remove-ship':
+          if (message.data.ship_id) {
+            const ship: Ship | undefined = player.gameboard.getShipById(message.data.ship_id)
+            if (ship) {
+              player.gameboard.cleanBoardOnShip(ship)
+              ship.cleanData()
+              sendPlayerData(ws, player)
+            }
+          }
           break
       }
     } catch (error) {

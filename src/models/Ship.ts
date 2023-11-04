@@ -24,6 +24,9 @@ export default class Ship {
   /** The position of the ship on the gameboard. */
   position: ShipPosition
 
+  /** True if ship is placed on the board in valid coordinates. */
+  isOnBoard: boolean
+
   /**
    * @param id The battleship unique identifier
    * @param name The battleship name
@@ -35,6 +38,7 @@ export default class Ship {
     this.size = size
     this.hits = 0 // No attacks on the ship initially
     this.position = new ShipPosition()
+    this.isOnBoard = false
   }
 
   /**
@@ -44,5 +48,6 @@ export default class Ship {
     this.position.row = -1
     this.position.col = -1
     this.position.isVertical = false
+    this.isOnBoard = false
   }
 }

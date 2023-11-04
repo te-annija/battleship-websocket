@@ -15,5 +15,8 @@ export const enum BoardCellState {
   Miss = 'miss',
 
   /** The cell is attacked and the ship is sunk */
-  Sunk = 'sunk'
+  Sunk = 'sunk',
+
+  /** The cell is adjacent to the ship */
+  Adjacent = 'adjacent'
 }

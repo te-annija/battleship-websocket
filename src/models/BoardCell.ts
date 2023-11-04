@@ -16,7 +16,11 @@ export default class BoardCell {
   /** Reference to an occupying ship, or null if the cell is empty. */
   ship?: Ship
 
+  /** The number of adjacent ships to the cell. */
+  adjacentCount: number
+
   constructor() {
     this.state = BoardCellState.Empty
+    this.adjacentCount = 0 // No adjacent ships initally because board is empty.
   }
 }

@@ -60,9 +60,10 @@ export default class Gameboard {
     this.cleanBoard()
 
     for (let ship of this.ships) {
+      let position = null
       do {
-        ship.position = this.getRandomStartPosition(ship)
-      } while (!this.placeShip(ship))
+        position = this.getRandomStartPosition(ship)
+      } while (!this.placeShip(ship, position))
     }
   }
 
@@ -72,10 +73,20 @@ export default class Gameboard {
    * @param ship The ship that needs to be added to the grid.
    * @returns Returns true if ship is placed on board successfully.
    */
-  placeShip(ship: Ship): boolean {
-    if (!this.isValidPlacement(ship)) {
+  placeShip(ship: Ship, position: ShipPosition): boolean {
+    const shipClone = JSON.parse(JSON.stringify(ship))
+    shipClone.position = position
+
+    if (!this.isValidPlacement(shipClone)) {
       return false
     }
+
+    if (ship.isOnBoard) {
+      this.cleanBoardOnShip(ship)
+    }
+
+    ship.position = position
+    ship.isOnBoard = true
     this.saveShipOnGrid(ship)
     return true
   }
@@ -88,12 +99,32 @@ export default class Gameboard {
       for (let j = 0; j < this.grid[i].length; j++) {
         this.grid[i][j].ship = undefined
         this.grid[i][j].state = BoardCellState.Empty
+        this.grid[i][j].adjacentCount = 0
       }
     }
 
     for (let ship of this.ships) {
       ship.cleanData()
     }
+  }
+
+  /**
+   * Cleans the board around all position of the ship. Needed to remove the ship from board.
+   *
+   * @param ship The ship that needs to be removed.
+   */
+  cleanBoardOnShip(ship: Ship): void {
+    this.iterateAdjacentCells(ship, (offsetRow, offsetCol) => {
+      let cell: BoardCell = this.grid[offsetRow][offsetCol]
+
+      if (cell.adjacentCount <= 1) {
+        cell.state = BoardCellState.Empty
+        cell.ship = undefined
+        cell.adjacentCount = 0
+      } else {
+        cell.adjacentCount -= 1
+      }
+    })
   }
 
   /**
@@ -125,6 +156,23 @@ export default class Gameboard {
       cell.state = BoardCellState.Ship
       cell.ship = ship
     }
+    this.iterateAdjacentCells(ship, (offsetRow, offsetCol) => {
+      let cell: BoardCell = this.grid[offsetRow][offsetCol]
+      if (cell.state !== BoardCellState.Ship) {
+        cell.state = BoardCellState.Adjacent
+        cell.adjacentCount += 1
+      }
+    })
+  }
+
+  /**
+   * Returns the ship if ship with shipId exists, and undefined otherwise.
+   * @param shipId  The id of the ship to be found.
+   * @returns The ship if ID exists or undefiend otherwise.
+   */
+  getShipById(shipId: string): Ship | undefined {
+    console.log(shipId)
+    return this.ships.find((ship) => ship.id === shipId)
   }
 
   /**
@@ -158,9 +206,9 @@ export default class Gameboard {
     }
 
     if (ship.position.isVertical) {
-      return ship.position.row + ship.size - 1 < this.coord_max
+      return ship.position.row + ship.size - 1 <= this.coord_max
     } else {
-      return ship.position.col + ship.size - 1 < this.coord_max
+      return ship.position.col + ship.size - 1 <= this.coord_max
     }
   }
 

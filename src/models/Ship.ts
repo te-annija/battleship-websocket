@@ -49,5 +49,29 @@ export default class Ship {
     this.position.col = -1
     this.position.isVertical = false
     this.isOnBoard = false
+    this.hits = 0
+  }
+
+  /**
+   * Checks if the ship is sunk, indicating that all its parts have been hit.
+   * @returns True if the ship is sunk, false otherwise.
+   */
+  isSunk(): boolean {
+    return this.hits >= this.size
+  }
+
+  /**
+   * Checks if the ship is on the game board, indicating it has been placed during setup.
+   * @returns True if the ship is on the board, false otherwise.
+   */
+  isShipOnBoard(): boolean {
+    return this.isOnBoard
+  }
+
+  /**
+   * Registers a hit on the ship.
+   */
+  hit(): void {
+    this.hits++
   }
 }

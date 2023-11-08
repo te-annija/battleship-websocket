@@ -128,6 +128,85 @@ export default class Gameboard {
   }
 
   /**
+   * Checks if all the ships on the game board are sunk.
+   *
+   * @returns Returns true if all ships are sunk; otherwise, returns false.
+   */
+  allShipsSunk(): boolean {
+    return this.ships.every((ship) => ship.isSunk())
+  }
+
+  /**
+   * Checks if all the ships are placed on the game board.
+   *
+   * @returns Returns true if all ships are successfully placed on the board; otherwise, returns false.
+   */
+  isAllShipsOnBoard(): boolean {
+    return this.ships.every((ship) => ship.isShipOnBoard())
+  }
+
+  /**
+   * Handle the opponent attack on the grid cell. Changes the cell state and modifies the hit ship.
+   *
+   * @param row The row index of the target cell.
+   * @param col The column index of the target cell.
+   */
+  attack(row: number, col: number): void {
+    if (!this.isCellWithinBoard(row, col)) {
+      throw new Error('Invalid guess coordinates.')
+    }
+
+    const cell = this.grid[row][col]
+    const cellState = cell.state
+
+    if (cellState === BoardCellState.Empty || cellState === BoardCellState.Adjacent) {
+      cell.state = BoardCellState.Miss
+    } else if (cellState === BoardCellState.Ship && cell.ship) {
+      cell.state = BoardCellState.Hit
+      cell.ship.hit()
+      this.setBorderingCellsAsMissed(row, col)
+
+      if (cell.ship.isSunk()) {
+        this.setAdjacentCellsAsMissed(cell.ship)
+      }
+    }
+  }
+
+  /**
+   * Marks cells diagonally of the surrounding a specified location as "missed" to indicate that they cannot contain a ship.
+   *
+   * @param row The row index of the target location.
+   * @param col The column index of the target location.
+   */
+  setBorderingCellsAsMissed(row: number, col: number): void {
+    const offsets = [
+      { row: 1, col: 1 },
+      { row: 1, col: -1 },
+      { row: -1, col: 1 },
+      { row: -1, col: -1 }
+    ]
+    for (const offset of offsets) {
+      const offsetRow = row + offset.row
+      const offsetCol = col + offset.col
+
+      if (this.isCellWithinBoard(offsetRow, offsetCol)) {
+        this.setCellAsMissed(offsetRow, offsetCol)
+      }
+    }
+  }
+
+  /**
+   * Marks all adjacent cells of a ship as missed, indicating that they do not contain a ship.
+   *
+   * @param ship The ship for which adjacent cells should be marked as missed.
+   */
+  setAdjacentCellsAsMissed(ship: Ship): void {
+    this.iterateAdjacentCells(ship, (offsetRow, offsetCol) => {
+      this.setCellAsMissed(offsetRow, offsetCol)
+    })
+  }
+
+  /**
    * Determine if the ship placement on the grid would be valid.
    *
    * @param ship The ship whose placement on the grid needs to be checked.
@@ -219,7 +298,7 @@ export default class Gameboard {
    * @param colIndex The column index of the grid.
    * @returns Returns true if cell is within boarders.
    */
-  private isCellWithinBoard(rowIndex: number, colIndex: number): boolean {
+  isCellWithinBoard(rowIndex: number, colIndex: number): boolean {
     return (
       rowIndex <= this.coord_max &&
       rowIndex >= this.coord_min &&
@@ -274,6 +353,21 @@ export default class Gameboard {
         if (this.isCellWithinBoard(offsetRow, offsetCol)) {
           callback(offsetRow, offsetCol)
         }
+      }
+    }
+  }
+
+  /**
+   * Marks a specific cell as missed if it is within the game board boundaries and is either empty or adjacent.
+   *
+   * @param row The row index of the cell to mark as missed.
+   * @param col The column index of the cell to mark as missed.
+   */
+  private setCellAsMissed(row: number, col: number): void {
+    if (this.isCellWithinBoard(row, col)) {
+      const cell = this.grid[row][col]
+      if (cell.state === BoardCellState.Empty || cell.state === BoardCellState.Adjacent) {
+        cell.state = BoardCellState.Miss
       }
     }
   }

@@ -5,9 +5,11 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws'
-import Player from './models/Player.js'
-import Ship from 'models/Ship.js'
 import config from 'config'
+import GameRoom from './models/GameRoom.js'
+import Player from './models/Player.js'
+import PlayerAI from './models/PlayerAI.js'
+import Ship from './models/Ship.js'
 
 const serverPort: number = config.has('server.ports') ? config.get('server.ports') : 8080
 const wss: WebSocketServer = new WebSocketServer({
@@ -15,6 +17,7 @@ const wss: WebSocketServer = new WebSocketServer({
 })
 const players: Map<string, Player> = new Map()
 const connections: Map<string, WebSocket> = new Map()
+const gamerooms: Map<string, GameRoom> = new Map()
 
 /**
  * Websocket server connection
@@ -33,6 +36,9 @@ wss.on('connection', (ws: WebSocket, request) => {
     if (player) {
       sendPlayerData(ws, player)
       connections.set(id, ws)
+      if (player.gameRoomId && gamerooms.has(player.gameRoomId)) {
+        sendAction(ws, 'game-started')
+      }
     }
   } else {
     // New user session
@@ -55,16 +61,33 @@ wss.on('connection', (ws: WebSocket, request) => {
     try {
       const message = JSON.parse(data)
       console.log(message)
+      var gameroom =
+        player.gameRoomId && gamerooms.has(player.gameRoomId)
+          ? gamerooms.get(player.gameRoomId)
+          : null
+
       switch (message.type) {
         case 'randomize-ships':
+          if (gameroom) {
+            throw new Error('Cannot randomize ships! Game already started')
+          }
+
           player.gameboard.placeShipsRandomly()
           sendPlayerData(ws, player)
           break
         case 'reset-ships':
+          if (gameroom) {
+            throw new Error('Cannot reset ship! Game already started')
+          }
+
           player.gameboard.cleanBoard()
           sendPlayerData(ws, player)
           break
         case 'place-ship':
+          if (gameroom) {
+            throw new Error('Cannot place ship! Game already started')
+          }
+
           if (message.data.ship_id && message.data.position) {
             const ship: Ship | undefined = player.gameboard.getShipById(message.data.ship_id)
             if (ship) {
@@ -74,6 +97,10 @@ wss.on('connection', (ws: WebSocket, request) => {
           }
           break
         case 'remove-ship':
+          if (gameroom) {
+            throw new Error('Cannot remove ship! Game already started')
+          }
+
           if (message.data.ship_id) {
             const ship: Ship | undefined = player.gameboard.getShipById(message.data.ship_id)
             if (ship) {
@@ -83,9 +110,61 @@ wss.on('connection', (ws: WebSocket, request) => {
             }
           }
           break
+        case 'start-game':
+          if (!player.gameboard.isAllShipsOnBoard()) {
+            throw new Error('Place ships before starting a new game.')
+          }
+
+          if (!gameroom) {
+            const newGameRoom = new GameRoom(generateRandomString(), player)
+            newGameRoom.playerAI = new PlayerAI(generateRandomString())
+            gamerooms.set(newGameRoom.id, newGameRoom)
+            player.gameRoomId = newGameRoom.id
+
+            sendAction(ws, 'game-started')
+          }
+          break
+        case 'end-game':
+          player.gameboard.cleanBoard()
+          player.enemyGameboard.cleanBoard()
+
+          if (gameroom) {
+            gamerooms.delete(gameroom.id)
+            player.gameRoomId = undefined
+
+            sendAction(ws, 'game-ended')
+          }
+
+          sendPlayerData(ws, player)
+          break
+        case 'attack-cell':
+          if (!gameroom) {
+            throw new Error('Gameroom is not created. Please create a new game.')
+          }
+
+          if (gameroom.currentPlayer !== player) {
+            throw new Error('This is not your turn. Please wait!')
+          }
+
+          if (gameroom.makeAttack(message.data.row, message.data.col)) {
+            sendPlayerData(ws, player)
+          } else {
+            throw new Error('Please provide valid attacking coordinates!')
+          }
+
+          if (gameroom.currentPlayer !== player && gameroom.playerAI) {
+            while (gameroom.currentPlayer.id === gameroom.playerAI.id) {
+              gameroom.makeAIAttack()
+              sendPlayerData(ws, player)
+            }
+          }
+          break
       }
-    } catch (error) {
+    } catch (error: any) {
       console.log(error)
+      if (typeof error.message === 'string') {
+        sendNotification(ws, 'error', error.message)
+      }
     }
   })
 
@@ -149,6 +228,40 @@ function sendPlayerData(ws: WebSocket, player: Player): void {
 }
 
 /**
+ * Sends a notification message to a player
+ *
+ * @param ws Current connection websocket
+ * @param type The type of the message (eg., success, error)
+ * @param notification The message to display to the user
+ */
+function sendNotification(ws: WebSocket, type: string, notification: string): void {
+  ws.send(
+    JSON.stringify({
+      type: 'notification',
+      data: {
+        type: type,
+        message: notification
+      }
+    })
+  )
+}
+
+/**
+ * Sends a simple action to the player
+ *
+ * @param ws Current connection websocket
+ * @param type The action to perform
+ */
+function sendAction(ws: WebSocket, type: string): void {
+  ws.send(
+    JSON.stringify({
+      type: type,
+      data: null
+    })
+  )
+}
+
+/**
  * Check and close inactive connections if user is not reached Websocket in 15 minutes
  */
 function closeInactiveConnections() {
@@ -159,6 +272,9 @@ function closeInactiveConnections() {
     const fifteenMin = 15 * 60 * 1000
     if (currentTime - playerLastActiveTime > fifteenMin) {
       ws.close()
+      if (player && player.gameRoomId) {
+        gamerooms.delete(player.gameRoomId)
+      }
       players.delete(playerId)
       connections.delete(playerId)
       console.log(`Closed inactive connection for player ${playerId}`)

@@ -56,7 +56,7 @@ export default class GameRoom {
       throw new Error('Cannot make an attack. Row and column numbers are required.')
     }
 
-    if (!this.currentPlayer || !this.player1 || !this.playerAI) {
+    if (!this.currentPlayer || !this.player1 || (!this.playerAI && !this.player2)) {
       throw new Error('An unexpected error occurred. Please restart the game.')
     }
 
@@ -69,7 +69,16 @@ export default class GameRoom {
 
     // The handling of the attack.
     const currentPlayer = this.currentPlayer
-    const enemy = this.currentPlayer == this.player1 ? this.playerAI : this.player1
+    const enemy =
+      this.currentPlayer === this.player1
+        ? this.player2
+          ? this.player2
+          : this.playerAI
+        : this.player1
+
+    if (!enemy) {
+      throw new Error('An unexpected error occurred. Please restart the game.')
+    }
 
     enemy.recieveAttack(row, col)
 
@@ -110,7 +119,12 @@ export default class GameRoom {
    * Switch the active player. The active player will be allowed to make an attack.
    */
   switchPlayer(): void {
-    this.currentPlayer = this.currentPlayer === this.player1 ? this.playerAI : this.player1
+    this.currentPlayer =
+      this.currentPlayer === this.player1
+        ? this.player2
+          ? this.player2
+          : this.playerAI
+        : this.player1
   }
 
   /**

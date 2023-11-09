@@ -38,6 +38,15 @@ wss.on('connection', (ws: WebSocket, request) => {
       connections.set(id, ws)
       if (player.gameRoomId && gamerooms.has(player.gameRoomId)) {
         sendAction(ws, 'game-started')
+
+        const gameroom = gamerooms.get(player.gameRoomId)
+        if (gameroom) {
+          if (gameroom.currentPlayer === player) {
+            sendAction(ws, 'player-turn')
+          } else {
+            sendAction(ws, 'opponent-turn')
+          }
+        }
       }
     }
   } else {
@@ -65,6 +74,14 @@ wss.on('connection', (ws: WebSocket, request) => {
         player.gameRoomId && gamerooms.has(player.gameRoomId)
           ? gamerooms.get(player.gameRoomId)
           : null
+      var opponent: Player | undefined = gameroom
+        ? gameroom.player1 === player
+          ? gameroom.player2
+          : gameroom.player1
+        : undefined
+
+      var opponentWs: WebSocket | undefined =
+        opponent && connections.has(opponent.id) ? connections.get(opponent.id) : undefined
 
       switch (message.type) {
         case 'randomize-ships':
@@ -110,7 +127,35 @@ wss.on('connection', (ws: WebSocket, request) => {
             }
           }
           break
-        case 'start-game':
+        case 'join-room': {
+          if (!player.gameboard.isAllShipsOnBoard()) {
+            throw new Error('Place ships before joining a room.')
+          }
+
+          const gameRoom = Array.from(gamerooms.values()).find((room) => room.player2 === undefined)
+
+          if (gameRoom) {
+            gameRoom.player2 = player
+            player.gameRoomId = gameRoom.id
+
+            const opponentWs: WebSocket | undefined = connections.get(gameRoom.player1.id)
+            if (opponentWs) {
+              sendAction(opponentWs, 'player-turn')
+              sendAction(ws, 'opponent-turn')
+
+              sendAction(ws, 'game-started')
+              sendAction(opponentWs, 'game-started')
+            }
+          } else {
+            const newGameRoom = new GameRoom(generateRandomString(), player)
+            gamerooms.set(newGameRoom.id, newGameRoom)
+            player.gameRoomId = newGameRoom.id
+            sendAction(ws, 'game-created')
+          }
+
+          break
+        }
+        case 'create-room-ai':
           if (!player.gameboard.isAllShipsOnBoard()) {
             throw new Error('Place ships before starting a new game.')
           }
@@ -124,7 +169,7 @@ wss.on('connection', (ws: WebSocket, request) => {
             sendAction(ws, 'game-started')
           }
           break
-        case 'end-game':
+        case 'leave-game':
           player.gameboard.cleanBoard()
           player.enemyGameboard.cleanBoard()
 
@@ -134,10 +179,23 @@ wss.on('connection', (ws: WebSocket, request) => {
           }
 
           sendPlayerData(ws, player)
+
+          if (opponent && opponentWs) {
+            opponent.gameboard.cleanBoard()
+            opponent.enemyGameboard.cleanBoard()
+            sendAction(opponentWs, 'opponent-disconnected')
+          }
           break
         case 'attack-cell':
           if (!gameroom) {
             throw new Error('Gameroom is not created. Please create a new game.')
+          }
+
+          if (!gameroom.playerAI && (!opponentWs || !opponent)) {
+            player.gameboard.cleanBoard()
+            player.enemyGameboard.cleanBoard()
+            sendAction(ws, 'opponent-disconnected')
+            throw new Error('Opponent disconnected!')
           }
 
           if (gameroom.currentPlayer !== player) {
@@ -146,10 +204,24 @@ wss.on('connection', (ws: WebSocket, request) => {
 
           if (gameroom.makeAttack(message.data.row, message.data.col)) {
             sendPlayerData(ws, player)
+
+            if (!gameroom.playerAI) {
+              if (!opponentWs || !opponent) {
+                throw new Error('Opponent disconnected!')
+              }
+              sendPlayerData(opponentWs, opponent)
+            }
+
             if (gameroom.currentPlayer === player) {
               sendAction(ws, 'player-turn')
             } else {
               sendAction(ws, 'opponent-turn')
+              if (!gameroom.playerAI) {
+                if (!opponentWs) {
+                  throw new Error('Opponent disconnected!')
+                }
+                sendAction(opponentWs, 'player-turn')
+              }
             }
           } else {
             throw new Error('Please provide valid attacking coordinates!')
@@ -177,6 +249,14 @@ wss.on('connection', (ws: WebSocket, request) => {
   // Handle WebSocket disconnects
   ws.on('close', () => {
     console.log('A player disconnected')
+    if (player && player.gameRoomId && gamerooms.has(player.gameRoomId)) {
+      const gameroom: GameRoom | undefined = gamerooms.get(player.gameRoomId)
+      // Exit waiting room if game is not yet started
+      if (gameroom && !gameroom.playerAI && !gameroom.player2) {
+        gamerooms.delete(gameroom.id)
+        player.gameRoomId = undefined
+      }
+    }
   })
 })
 

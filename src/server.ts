@@ -49,7 +49,7 @@ wss.on('connection', (ws: WebSocket, request) => {
   }
 
   // Handle WebSocket messages
-  ws.on('message', (data: string) => {
+  ws.on('message', async (data: string) => {
     console.log('received: %s', data)
 
     if (!player) {
@@ -131,8 +131,6 @@ wss.on('connection', (ws: WebSocket, request) => {
           if (gameroom) {
             gamerooms.delete(gameroom.id)
             player.gameRoomId = undefined
-
-            sendAction(ws, 'game-ended')
           }
 
           sendPlayerData(ws, player)
@@ -148,6 +146,11 @@ wss.on('connection', (ws: WebSocket, request) => {
 
           if (gameroom.makeAttack(message.data.row, message.data.col)) {
             sendPlayerData(ws, player)
+            if (gameroom.currentPlayer === player) {
+              sendAction(ws, 'player-turn')
+            } else {
+              sendAction(ws, 'opponent-turn')
+            }
           } else {
             throw new Error('Please provide valid attacking coordinates!')
           }
@@ -155,9 +158,12 @@ wss.on('connection', (ws: WebSocket, request) => {
           if (gameroom.currentPlayer !== player && gameroom.playerAI) {
             while (gameroom.currentPlayer.id === gameroom.playerAI.id) {
               gameroom.makeAIAttack()
+              await delay(1000)
               sendPlayerData(ws, player)
             }
+            sendAction(ws, 'player-turn')
           }
+
           break
       }
     } catch (error: any) {
@@ -279,5 +285,15 @@ function closeInactiveConnections() {
       connections.delete(playerId)
       console.log(`Closed inactive connection for player ${playerId}`)
     }
+  })
+}
+
+/**
+ * Helper function to timeout the code execution.
+ * @param ms Time in miliseconds
+ */
+async function delay(ms: number): Promise<any> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
   })
 }

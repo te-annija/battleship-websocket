@@ -91,6 +91,9 @@ export default class GameRoom {
 
       if (cellEnemy.ship.isSunk()) {
         currentPlayer.enemyGameboard.setAdjacentCellsAsMissed(cellEnemy.ship)
+        currentPlayer.enemyGameboard.grid[cellEnemy.ship.position.row][
+          cellEnemy.ship.position.col
+        ].ship = cellEnemy.ship
       }
 
       if (enemy.gameboard.allShipsSunk()) {

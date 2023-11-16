@@ -12,6 +12,9 @@ export default class Player {
   /** The unique identifier for the player. */
   id: string
 
+  /** The public name of the player. */
+  name: string
+
   /** The player's own gameboard. */
   gameboard: Gameboard
 
@@ -26,9 +29,11 @@ export default class Player {
 
   /**
    * @param id The unique identifier for the player.
+   * @param name The public name of the player.
    */
-  constructor(id: string) {
+  constructor(id: string, name: string) {
     this.id = id
+    this.name = name
     this.gameboard = new Gameboard()
     this.enemyGameboard = new Gameboard()
     this.lastActiveTime = new Date().getTime()

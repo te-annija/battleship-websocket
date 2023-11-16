@@ -13,7 +13,7 @@ export default class PlayerAI extends Player {
   private targets: { row: number; col: number }[]
 
   constructor(id: string) {
-    super(id)
+    super(id, 'Friendly AI')
     this.gameboard.placeShipsRandomly()
     this.targets = []
   }

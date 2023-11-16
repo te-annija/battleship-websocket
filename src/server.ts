@@ -8,8 +8,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import config from 'config'
 import GameRoom from './models/GameRoom.js'
 import Player from './models/Player.js'
-import PlayerAI from './models/PlayerAI.js'
-import Ship from './models/Ship.js'
+import * as gameLogic from './gameLogic.js'
 
 const serverPort: number = config.has('server.ports') ? config.get('server.ports') : 8080
 const wss: WebSocketServer = new WebSocketServer({
@@ -27,32 +26,23 @@ wss.on('connection', (ws: WebSocket, request) => {
 
   // Handle Player initial data
   const cookieUid = getUidFromCookies(request.headers.cookie ?? '')
-  const id: string = cookieUid !== '' ? cookieUid : generateRandomString()
+  const id: string = cookieUid !== '' ? cookieUid : generateRandomString('player')
   let player: Player | undefined
 
   if (players.has(id)) {
     // Player is already started session before
     player = players.get(id)
     if (player) {
-      sendPlayerData(ws, player)
       connections.set(id, ws)
-      if (player.gameRoomId && gamerooms.has(player.gameRoomId)) {
-        sendAction(ws, 'game-started')
-
-        const gameroom = gamerooms.get(player.gameRoomId)
-        if (gameroom) {
-          if (gameroom.currentPlayer === player) {
-            sendAction(ws, 'player-turn')
-          } else {
-            sendAction(ws, 'opponent-turn')
-          }
-        }
-      }
+      const gameroom: GameRoom | undefined = player.gameRoomId
+        ? gamerooms.get(player.gameRoomId)
+        : undefined
+      gameLogic.handlePlayerSessionStart(ws, player, gameroom)
     }
   } else {
     // New user session
-    player = new Player(id)
-    sendPlayerData(ws, player)
+    player = new Player(id, 'test-' + id)
+    gameLogic.handlePlayerSessionStart(ws, player)
     players.set(id, player)
     connections.set(id, ws)
   }
@@ -73,7 +63,7 @@ wss.on('connection', (ws: WebSocket, request) => {
       var gameroom =
         player.gameRoomId && gamerooms.has(player.gameRoomId)
           ? gamerooms.get(player.gameRoomId)
-          : null
+          : undefined
       var opponent: Player | undefined = gameroom
         ? gameroom.player1 === player
           ? gameroom.player2
@@ -85,163 +75,128 @@ wss.on('connection', (ws: WebSocket, request) => {
 
       switch (message.type) {
         case 'randomize-ships':
-          if (gameroom) {
-            throw new Error('Cannot randomize ships! Game already started')
-          }
-
-          player.gameboard.placeShipsRandomly()
-          sendPlayerData(ws, player)
+          gameLogic.handleRandomizeShips(ws, player, gameroom)
           break
         case 'reset-ships':
-          if (gameroom) {
-            throw new Error('Cannot reset ship! Game already started')
-          }
-
-          player.gameboard.cleanBoard()
-          sendPlayerData(ws, player)
+          gameLogic.handleResetShips(ws, player, gameroom)
           break
         case 'place-ship':
-          if (gameroom) {
-            throw new Error('Cannot place ship! Game already started')
-          }
-
-          if (message.data.ship_id && message.data.position) {
-            const ship: Ship | undefined = player.gameboard.getShipById(message.data.ship_id)
-            if (ship) {
-              player.gameboard.placeShip(ship, message.data.position)
-              sendPlayerData(ws, player)
-            }
-          }
+          gameLogic.handlePlaceShip(ws, player, gameroom, message.data)
           break
         case 'remove-ship':
-          if (gameroom) {
-            throw new Error('Cannot remove ship! Game already started')
-          }
-
-          if (message.data.ship_id) {
-            const ship: Ship | undefined = player.gameboard.getShipById(message.data.ship_id)
-            if (ship) {
-              player.gameboard.cleanBoardOnShip(ship)
-              ship.cleanData()
-              sendPlayerData(ws, player)
-            }
-          }
+          gameLogic.handleRemoveShip(ws, player, gameroom, message.data)
           break
-        case 'join-room': {
-          if (!player.gameboard.isAllShipsOnBoard()) {
-            throw new Error('Place ships before joining a room.')
-          }
+        case 'attack-cell':
+          await gameLogic.handleAttackCell(ws, player, gameroom, message.data, opponent, opponentWs)
 
-          const gameRoom = Array.from(gamerooms.values()).find((room) => room.player2 === undefined)
+          break
+        case 'create-room': {
+          const newGameRoom = gameLogic.handleCreateRoom(
+            ws,
+            player,
+            generateRandomString('gameroom'),
+            message.data
+          )
+          gamerooms.set(newGameRoom.id, newGameRoom)
 
-          if (gameRoom) {
-            gameRoom.player2 = player
-            player.gameRoomId = gameRoom.id
-
-            const opponentWs: WebSocket | undefined = connections.get(gameRoom.player1.id)
-            if (opponentWs) {
-              sendAction(opponentWs, 'player-turn')
-              sendAction(ws, 'opponent-turn')
-
-              sendAction(ws, 'game-started')
-              sendAction(opponentWs, 'game-started')
-            }
-          } else {
-            const newGameRoom = new GameRoom(generateRandomString(), player)
-            gamerooms.set(newGameRoom.id, newGameRoom)
-            player.gameRoomId = newGameRoom.id
-            sendAction(ws, 'game-created')
+          if (message.data && message.data.type && message.data.type == 'computer') {
+            gameLogic.handleAddAIPlayer(ws, newGameRoom, generateRandomString('player'))
+            newGameRoom.isGameStarted = true
           }
 
           break
         }
-        case 'create-room-ai':
-          if (!player.gameboard.isAllShipsOnBoard()) {
-            throw new Error('Place ships before starting a new game.')
-          }
-
-          if (!gameroom) {
-            const newGameRoom = new GameRoom(generateRandomString(), player)
-            newGameRoom.playerAI = new PlayerAI(generateRandomString())
-            gamerooms.set(newGameRoom.id, newGameRoom)
-            player.gameRoomId = newGameRoom.id
-
-            sendAction(ws, 'game-started')
-          }
-          break
         case 'leave-game':
-          player.gameboard.cleanBoard()
-          player.enemyGameboard.cleanBoard()
-
-          if (gameroom) {
+          gameLogic.handleLeaveGame(ws, player, gameroom, opponentWs)
+          if (gameroom && !gameroom.player1 && !gameroom.player2) {
             gamerooms.delete(gameroom.id)
-            player.gameRoomId = undefined
           }
 
-          sendPlayerData(ws, player)
+          break
+        case 'join-room': {
+          if (message.data && message.data.id) {
+            if (gameroom && gameroom.id === message.data.id) {
+              gameLogic.handleJoinRoom(ws, player, gameroom, opponentWs)
+              return
+            }
 
-          if (opponent && opponentWs) {
-            opponent.gameboard.cleanBoard()
-            opponent.enemyGameboard.cleanBoard()
-            sendAction(opponentWs, 'opponent-disconnected')
+            const gameroomFriend = gamerooms.get(message.data.id)
+            if (!gameroomFriend) {
+              throw new Error(
+                'The gameroom not found. Please recheck if the link is valid and friend is still in the gameroom.'
+              )
+            }
+
+            if (gameroomFriend.player2 && gameroomFriend.player2 !== player) {
+              throw new Error('Failed to join the gameroom. The gameroom is already full.')
+            }
+
+            if (
+              gameroomFriend.isGameStarted &&
+              (!gameroomFriend.player1 || !gameroomFriend.player2)
+            ) {
+              throw new Error('Failed to join the gameroom. The game is already ended.')
+            }
+
+            const opponentNew: Player | undefined = gameroomFriend.player1
+              ? gameroomFriend.player1
+              : gameroomFriend.player2
+
+            const opponentWsNew: WebSocket | undefined =
+              opponentNew && connections.has(opponentNew.id)
+                ? connections.get(opponentNew.id)
+                : undefined
+
+            if (!opponentWsNew) {
+              throw new Error('Could not join the gameroom. The friend is not connected to game.')
+            }
+
+            gameLogic.handleJoinRoom(ws, player, gameroomFriend, opponentWsNew)
+          } else {
+            const gameroomAvailiable = Array.from(gamerooms.values()).find(
+              (room) =>
+                room.player1 &&
+                room.player2 === undefined &&
+                room.type === 'random' &&
+                connections.has(room.player1.id)
+            )
+
+            if (gameroomAvailiable) {
+              const opponentWsNew: WebSocket | undefined = gameroomAvailiable.player1
+                ? connections.get(gameroomAvailiable.player1.id)
+                : undefined
+
+              if (opponentWsNew) {
+                gameLogic.handleJoinRoom(ws, player, gameroomAvailiable, opponentWsNew)
+                gameLogic.handleStartGame(ws, player, gameroomAvailiable, opponentWsNew)
+              }
+            } else {
+              const newGameRoom = gameLogic.handleCreateRoom(
+                ws,
+                player,
+                generateRandomString('gameroom'),
+                message.data
+              )
+              gamerooms.set(newGameRoom.id, newGameRoom)
+            }
           }
           break
-        case 'attack-cell':
-          if (!gameroom) {
-            throw new Error('Gameroom is not created. Please create a new game.')
-          }
-
-          if (!gameroom.playerAI && (!opponentWs || !opponent)) {
-            player.gameboard.cleanBoard()
-            player.enemyGameboard.cleanBoard()
-            sendAction(ws, 'opponent-disconnected')
-            throw new Error('Opponent disconnected!')
-          }
-
-          if (gameroom.currentPlayer !== player) {
-            throw new Error('This is not your turn. Please wait!')
-          }
-
-          if (gameroom.makeAttack(message.data.row, message.data.col)) {
-            sendPlayerData(ws, player)
-
-            if (!gameroom.playerAI) {
-              if (!opponentWs || !opponent) {
-                throw new Error('Opponent disconnected!')
-              }
-              sendPlayerData(opponentWs, opponent)
-            }
-
-            if (gameroom.currentPlayer === player) {
-              sendAction(ws, 'player-turn')
-            } else {
-              sendAction(ws, 'opponent-turn')
-              if (!gameroom.playerAI) {
-                if (!opponentWs) {
-                  throw new Error('Opponent disconnected!')
-                }
-                sendAction(opponentWs, 'player-turn')
-              }
-            }
-          } else {
-            throw new Error('Please provide valid attacking coordinates!')
-          }
-
-          if (gameroom.currentPlayer !== player && gameroom.playerAI) {
-            while (gameroom.currentPlayer.id === gameroom.playerAI.id) {
-              gameroom.makeAIAttack()
-              await delay(1000)
-              sendPlayerData(ws, player)
-            }
-            sendAction(ws, 'player-turn')
-          }
-
+        }
+        case 'ready':
+          gameLogic.handleReady(ws, player, gameroom, opponentWs, message.data)
           break
       }
     } catch (error: any) {
       console.log(error)
       if (typeof error.message === 'string') {
-        sendNotification(ws, 'error', error.message)
+        ws.send(
+          JSON.stringify({
+            type: 'error',
+            data: {
+              message: error.message
+            }
+          })
+        )
       }
     }
   })
@@ -252,7 +207,7 @@ wss.on('connection', (ws: WebSocket, request) => {
     if (player && player.gameRoomId && gamerooms.has(player.gameRoomId)) {
       const gameroom: GameRoom | undefined = gamerooms.get(player.gameRoomId)
       // Exit waiting room if game is not yet started
-      if (gameroom && !gameroom.playerAI && !gameroom.player2) {
+      if (gameroom && !gameroom.isGameStarted && gameroom.type !== 'friend') {
         gamerooms.delete(gameroom.id)
         player.gameRoomId = undefined
       }
@@ -283,68 +238,24 @@ function getUidFromCookies(cookies: string): string {
 }
 
 /**
- * Return randomly generated string and checks if no user is assigned already.
+ * Return randomly generated string and checks if no user or gameroom is assigned already.
+ * @param type The object type that needs a unique ID (eg, player, gameroom).
  * @returns Randomly generated user ID.
  */
-function generateRandomString(): string {
-  let playerID = Math.random().toString(36).substring(4)
+function generateRandomString(type: string = ''): string {
+  let ID = Math.random().toString(36).substring(4)
 
-  while (players.has(playerID)) {
-    playerID = Math.random().toString(36).substring(4)
+  if (type === 'player') {
+    while (players.has(ID)) {
+      ID = Math.random().toString(36).substring(4)
+    }
+  } else if (type === 'gameroom') {
+    while (gamerooms.has(ID)) {
+      ID = Math.random().toString(36).substring(4)
+    }
   }
 
-  return playerID
-}
-
-/**
- * Sends player data to the connection
- *
- * @param ws Current connection websocket
- * @param player Current data about player
- */
-function sendPlayerData(ws: WebSocket, player: Player): void {
-  ws.send(
-    JSON.stringify({
-      type: 'player',
-      data: {
-        player: player
-      }
-    })
-  )
-}
-
-/**
- * Sends a notification message to a player
- *
- * @param ws Current connection websocket
- * @param type The type of the message (eg., success, error)
- * @param notification The message to display to the user
- */
-function sendNotification(ws: WebSocket, type: string, notification: string): void {
-  ws.send(
-    JSON.stringify({
-      type: 'notification',
-      data: {
-        type: type,
-        message: notification
-      }
-    })
-  )
-}
-
-/**
- * Sends a simple action to the player
- *
- * @param ws Current connection websocket
- * @param type The action to perform
- */
-function sendAction(ws: WebSocket, type: string): void {
-  ws.send(
-    JSON.stringify({
-      type: type,
-      data: null
-    })
-  )
+  return ID
 }
 
 /**
@@ -359,21 +270,26 @@ function closeInactiveConnections() {
     if (currentTime - playerLastActiveTime > fifteenMin) {
       ws.close()
       if (player && player.gameRoomId) {
-        gamerooms.delete(player.gameRoomId)
+        const gameroom = gamerooms.get(player.gameRoomId)
+        const opponentWs =
+          gameroom && gameroom.player1 === player && gameroom.player2
+            ? connections.get(gameroom.player2.id)
+            : gameroom?.player1
+            ? connections.get(gameroom.player1.id)
+            : undefined
+
+        gameLogic.handleLeaveGame(ws, player, gameroom, opponentWs)
       }
       players.delete(playerId)
       connections.delete(playerId)
       console.log(`Closed inactive connection for player ${playerId}`)
     }
   })
-}
 
-/**
- * Helper function to timeout the code execution.
- * @param ms Time in miliseconds
- */
-async function delay(ms: number): Promise<any> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
+  // Clear all inactive gamerooms
+  gamerooms.forEach((gameroom, gameroomId) => {
+    if (!gameroom.player1 && !gameroom.player2) {
+      gamerooms.delete(gameroomId)
+    }
   })
 }

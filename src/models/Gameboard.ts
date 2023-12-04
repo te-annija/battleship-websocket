@@ -267,8 +267,8 @@ export default class Gameboard {
     const maxRow = position.isVertical ? this.coord_max - ship.size + 1 : this.coord_max
     const maxCol = position.isVertical ? this.coord_max : this.coord_max - ship.size + 1
 
-    position.row = Math.ceil(Math.random() * maxRow)
-    position.col = Math.ceil(Math.random() * maxCol)
+    position.row = Math.floor(Math.random() * (maxRow + 1))
+    position.col = Math.floor(Math.random() * (maxCol + 1))
 
     return position
   }

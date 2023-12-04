@@ -9,6 +9,7 @@ import Player from './models/Player.js'
 import GameRoom from './models/GameRoom.js'
 import Ship from './models/Ship.js'
 import PlayerAI from './models/PlayerAI.js'
+import gameService from './services/game.service.js'
 
 /**
  * Handle the player data if existing session needs to be restored.
@@ -22,14 +23,37 @@ export function handlePlayerSessionStart(
   player: Player,
   gameroom: GameRoom | undefined = undefined
 ) {
-  sendPlayerData(ws, player)
-  if (gameroom && gameroom.isGameStarted) {
-    sendAction(ws, 'game-started')
+  const isReady = gameroom ? gameroom.ready.get(player.id) === true : false
 
-    if (gameroom.currentPlayer === player) {
-      sendAction(ws, 'player-turn')
+  sendPlayerData(ws, player, isReady)
+  if (gameroom) {
+    const opponent =
+      gameroom.type === 'computer'
+        ? gameroom.playerAI
+        : player === gameroom.player1
+        ? gameroom.player2
+        : gameroom.player1
+
+    if (opponent) {
+      sendOpponentData(ws, opponent, gameroom.ready.get(opponent.id) === true)
+    }
+
+    console.log(opponent)
+
+    if (gameroom.isGameStarted) {
+      sendAction(ws, 'game-started')
+
+      if (gameroom.currentPlayer === player) {
+        sendAction(ws, 'player-turn')
+      } else {
+        sendAction(ws, 'opponent-turn')
+      }
+
+      if (!opponent) {
+        sendAction(ws, 'opponent-disconnected')
+      }
     } else {
-      sendAction(ws, 'opponent-turn')
+      handleJoinRoom(ws, player, gameroom)
     }
   }
 }
@@ -174,10 +198,14 @@ export function handleJoinRoom(
   ws: WebSocket,
   player: Player,
   gameroom: GameRoom,
-  opponentWs: WebSocket | undefined
+  opponentWs: WebSocket | undefined = undefined
 ): void {
   if (!gameroom.player1) {
     throw new Error('Failed to join the gameroom. Host disconnected.')
+  }
+
+  if (player.gameRoomId) {
+    throw new Error('Failed to join the gameroom. Leave already started game first.')
   }
 
   if (gameroom.player1 === player) {
@@ -251,7 +279,11 @@ export function handleStartGame(
 export function handleAddAIPlayer(ws: WebSocket, gameroom: GameRoom, PlayerAIId: string): void {
   if (gameroom.type === 'computer') {
     gameroom.playerAI = new PlayerAI(PlayerAIId)
+    gameroom.setPlayerReadyStatus(gameroom.playerAI.id, true)
+    sendOpponentData(ws, gameroom.playerAI, true)
     sendAction(ws, 'game-started')
+    sendAction(ws, 'player-turn')
+    gameroom.isGameStarted = true
   }
 }
 
@@ -296,6 +328,38 @@ export function handleLeaveGame(
 }
 
 /**
+ * Handle request to play again in the same gameroom.
+ *
+ * @param ws Current connection websocket.
+ * @param player Current data about player.
+ * @param gameroom The current gameroom where player is connected.
+ * @param opponent Current data about the opponent.
+ */
+export function handleRematchGame(
+  ws: WebSocket,
+  player: Player,
+  gameroom: GameRoom | undefined,
+  opponent: Player | undefined
+) {
+  if (gameroom && gameroom.isGameStarted) {
+    throw new Error('Cannot rematch the game! Game is not ended.')
+  }
+  if (!gameroom || (!opponent && gameroom.type !== 'computer')) {
+    sendAction(ws, 'opponent-disconnected')
+    return
+  }
+
+  player.gameboard.cleanBoard()
+  player.enemyGameboard.cleanBoard()
+  sendPlayerData(ws, player)
+
+  if (gameroom.type === 'computer' && gameroom.playerAI) {
+    gameroom.setPlayerReadyStatus(gameroom.playerAI.id, true)
+    sendOpponentData(ws, gameroom.playerAI, true)
+  }
+}
+
+/**
  * Handle ready to start the game for friend gameroom.
  *
  * @param ws Current connection websocket.
@@ -311,16 +375,26 @@ export async function handleReady(
   opponentWs: WebSocket | undefined,
   data: any
 ) {
-  if (!gameroom || !opponentWs || !data) {
+  if (!gameroom || !data) {
     throw new Error('Could not change ready status')
   }
 
   gameroom.setPlayerReadyStatus(player.id, data.status)
-  sendOpponentData(opponentWs, player, data.status)
 
-  if (gameroom.isReady()) {
-    // Both players are ready, start the game
-    handleStartGame(ws, player, gameroom, opponentWs)
+  if (opponentWs) {
+    sendOpponentData(opponentWs, player, data.status)
+    sendOpponentData(opponentWs, player, data.status)
+
+    sendOpponentData(opponentWs, player, data.status)
+
+    if (gameroom.isReady()) {
+      // Both players are ready, start the game
+      handleStartGame(ws, player, gameroom, opponentWs)
+    }
+  }
+
+  if (gameroom.type === 'computer' && gameroom.playerAI) {
+    handleAddAIPlayer(ws, gameroom, gameroom.playerAI.id)
   }
 }
 
@@ -351,7 +425,7 @@ export async function handleAttackCell(
     player.gameboard.cleanBoard()
     player.enemyGameboard.cleanBoard()
     sendAction(ws, 'opponent-disconnected')
-    throw new Error('Opponent disconnected!')
+    return
   }
 
   if (gameroom.currentPlayer !== player) {
@@ -374,6 +448,14 @@ export async function handleAttackCell(
     sendPlayerData(opponentWs, opponent)
   }
 
+  // Check if game can be ended.
+  const isEndOfGame = handleEndOfGame(ws, player, gameroom, opponent, opponentWs)
+
+  if (isEndOfGame) {
+    return
+  }
+
+  // Notify users about turns.
   if (gameroom.currentPlayer === player) {
     sendAction(ws, 'player-turn')
   } else {
@@ -390,6 +472,9 @@ export async function handleAttackCell(
       gameroom.makeAIAttack()
       await delay(1000)
       sendPlayerData(ws, player)
+      if (handleEndOfGame(ws, player, gameroom, opponent, opponentWs)) {
+        return
+      }
     }
     sendAction(ws, 'player-turn')
   }
@@ -401,12 +486,15 @@ export async function handleAttackCell(
  * @param ws Current connection websocket.
  * @param player Current data about player.
  */
-function sendPlayerData(ws: WebSocket, player: Player): void {
+function sendPlayerData(ws: WebSocket, player: Player, isReady: boolean = false): void {
   ws.send(
     JSON.stringify({
       type: 'player',
       data: {
-        player: player
+        player: {
+          ...player,
+          isReady: isReady
+        }
       }
     })
   )
@@ -446,6 +534,59 @@ function sendAction(ws: WebSocket, type: string, data: any = null): void {
       data: data
     })
   )
+}
+
+/**
+ * Handle end of game logic. Send data to be saved to db and notify users.
+ * @param ws Current connection websocket.
+ * @param player Current data about player.
+ * @param gameroom The current gameroom where player is connected.
+ * @param opponent Current data about the opponent.
+ * @param opponentWS Current connection to opponent websocket.
+ * @returns True if game has ended, false otherwise.
+ */
+function handleEndOfGame(
+  ws: WebSocket,
+  player: Player,
+  gameroom: GameRoom,
+  opponent: Player | undefined,
+  opponentWs: WebSocket | undefined
+): boolean {
+  if (!gameroom.winner) {
+    return false
+  }
+
+  // Prepare data to sent to server (save in the db).
+  let gameData = {
+    winnerId: 1, // Temporary - should change to registred user id
+    gameType: gameroom.type,
+    player1: {
+      userId: 1, // Temporary - should change to registred user id
+      gameboard: player.gameboard,
+      enemyGameboard: player.enemyGameboard
+    },
+    player2: {}
+  }
+
+  if (opponent) {
+    gameData.player2 = {
+      userId: 2, // Temporary - should change to registred user id
+      gameboard: opponent.gameboard,
+      enemyGameboard: opponent.enemyGameboard
+    }
+  }
+
+  // Send data to save in the db.
+  gameService.saveGame(gameData)
+
+  // Notify players game ended.
+  sendAction(ws, 'game-ended', { hasWon: player.id === gameroom.winner.id })
+
+  if (opponent && opponentWs) {
+    sendAction(opponentWs, 'game-ended', { hasWon: opponent.id === gameroom.winner.id })
+  }
+  gameroom.resetGame()
+  return true
 }
 
 /**

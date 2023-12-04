@@ -47,10 +47,10 @@ export default class GameRoom {
     this.id = id
     this.player1 = player1
     this.currentPlayer = player1
+    this.type = type
 
     this.ready = new Map()
     this.isGameStarted = false
-    this.type = type
   }
 
   /**
@@ -174,5 +174,22 @@ export default class GameRoom {
    */
   setPlayerReadyStatus(id: string, status: boolean) {
     this.ready.set(id, status)
+  }
+
+  resetGame() {
+    this.ready = new Map()
+    this.isGameStarted = false
+    this.winner = undefined
+    this.currentPlayer = this.player1
+
+    if (this.player1) {
+      this.player1.gameboard.cleanBoard()
+      this.player1.enemyGameboard.cleanBoard()
+    }
+
+    if (this.player2) {
+      this.player2.gameboard.cleanBoard()
+      this.player2.enemyGameboard.cleanBoard()
+    }
   }
 }

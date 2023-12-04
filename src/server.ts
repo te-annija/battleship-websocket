@@ -113,6 +113,10 @@ wss.on('connection', (ws: WebSocket, request) => {
           }
 
           break
+        case 'rematch-game':
+          gameLogic.handleRematchGame(ws, player, gameroom, opponent)
+
+          break
         case 'join-room': {
           if (message.data && message.data.id) {
             if (gameroom && gameroom.id === message.data.id) {
@@ -206,8 +210,8 @@ wss.on('connection', (ws: WebSocket, request) => {
     console.log('A player disconnected')
     if (player && player.gameRoomId && gamerooms.has(player.gameRoomId)) {
       const gameroom: GameRoom | undefined = gamerooms.get(player.gameRoomId)
-      // Exit waiting room if game is not yet started
-      if (gameroom && !gameroom.isGameStarted && gameroom.type !== 'friend') {
+      // Exit computer gane waiting room if game is not yet started
+      if (gameroom && !gameroom.isGameStarted && gameroom.type === 'computer') {
         gamerooms.delete(gameroom.id)
         player.gameRoomId = undefined
       }
@@ -226,7 +230,7 @@ setInterval(closeInactiveConnections, 5 * 60 * 1000)
 function getUidFromCookies(cookies: string): string {
   const cookieName = 'uid='
   try {
-    for (const cookie of cookies.split(';')) {
+    for (const cookie of cookies.split('; ')) {
       if (cookie.indexOf(cookieName) == 0) {
         return cookie.substring(cookieName.length, cookie.length)
       }

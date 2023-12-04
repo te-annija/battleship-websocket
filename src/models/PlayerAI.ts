@@ -25,8 +25,8 @@ export default class PlayerAI extends Player {
    */
   private getRandomTarget(): { row: number; col: number } {
     return {
-      row: Math.ceil(Math.random() * this.gameboard.size),
-      col: Math.ceil(Math.random() * this.gameboard.size)
+      row: Math.floor(Math.random() * this.gameboard.size),
+      col: Math.floor(Math.random() * this.gameboard.size)
     }
   }
 

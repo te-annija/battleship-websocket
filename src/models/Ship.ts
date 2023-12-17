@@ -27,18 +27,20 @@ export default class Ship {
   /** True if ship is placed on the board in valid coordinates. */
   isOnBoard: boolean
 
-  /**
-   * @param id The battleship unique identifier
-   * @param name The battleship name
-   * @param size The battleship size in units (should be less than gameboard size)
-   */
-  constructor(id: string, name: string, size: number) {
+  constructor(
+    id: string,
+    name: string,
+    size: number,
+    hits: number = 0, // No attacks on the ship initially
+    position: ShipPosition = new ShipPosition(),
+    isOnBoard: boolean = false
+  ) {
     this.id = id
     this.name = name
     this.size = size
-    this.hits = 0 // No attacks on the ship initially
-    this.position = new ShipPosition()
-    this.isOnBoard = false
+    this.hits = hits
+    this.position = position
+    this.isOnBoard = isOnBoard
   }
 
   /**

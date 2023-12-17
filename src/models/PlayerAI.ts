@@ -3,6 +3,9 @@
  * AUTHOR: Annija Karitone
  */
 
+import { GameboardCellState } from 'enums/GameboardCellState.js'
+import Gameboard from './Gameboard.js'
+import GameboardCell from './GameboardCell.js'
 import Player from './Player.js'
 
 /**
@@ -10,17 +13,23 @@ import Player from './Player.js'
  */
 export default class PlayerAI extends Player {
   /** The row and column index pairs to target if a ship is hit and need to be tageted further. */
-  private targets: { row: number; col: number }[]
+  targets: { row: number; col: number }[]
 
-  constructor(id: string) {
-    super(id, 'Friendly AI')
-    this.gameboard.placeShipsRandomly()
-    this.targets = []
+  constructor(
+    id: string,
+    gameboard?: Gameboard,
+    attackGameboard?: Gameboard,
+    targets: { row: number; col: number }[] = []
+  ) {
+    super(id, 'Friendly AI', gameboard, attackGameboard)
+    if (!gameboard) {
+      this.gameboard.placeShipsRandomly()
+    }
+    this.targets = targets
   }
 
   /**
    * Generates a random target position on the game board.
-   *
    * @returns  A random target position with row and column indices.
    */
   private getRandomTarget(): { row: number; col: number } {
@@ -32,25 +41,29 @@ export default class PlayerAI extends Player {
 
   /**
    * Determines the attack position for the AI player.
-   *
    * If the AI has targeted positions from a previous hit, it returns the one of the targeted positions.
    * If not, it randomly selects a target position on the game board.
-   *
    * @returns A target position for the AI's attack.
    */
   getAttackPosition(): { row: number; col: number } {
-    // Check if the last hit was successful and the ship is not yet sunk
-    if (this.targets.length > 0) {
-      return this.targets.pop() ?? this.getRandomTarget()
-    } else {
-      // Otherwise, hunt for a ship randomly
-      return this.getRandomTarget()
+    let isValidPosition = false
+    while (!isValidPosition) {
+      const target = this.targets.pop() ?? this.getRandomTarget()
+      console.log(this.attackGameboard.grid[target.row][target.col].state)
+      if (this.attackGameboard.grid[target.row][target.col].state === GameboardCellState.Empty) {
+        isValidPosition = true
+        return target
+      }
+    }
+
+    return {
+      row: -1,
+      col: -1
     }
   }
 
   /**
    * Adds adjacent positions to the list of targeted positions.
-   *
    * @param target The target position to explore adjacent positions.
    */
   addTargetedPositions(target: { row: number; col: number }): void {
@@ -76,5 +89,20 @@ export default class PlayerAI extends Player {
    */
   resetTargets(): void {
     this.targets = []
+  }
+
+  /**
+   * Updates targeted cells after an attack.
+   * @param row
+   * @param col
+   * @param enemyCell
+   */
+  processAfterAttack(row: number, col: number, enemyCell: GameboardCell): void {
+    if (enemyCell.ship) {
+      this.addTargetedPositions({ row: row, col: col })
+      if (enemyCell.ship.isSunk()) {
+        this.resetTargets()
+      }
+    }
   }
 }

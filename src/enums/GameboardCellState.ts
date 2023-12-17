@@ -1,7 +1,7 @@
 /**
  * Define possible states for a gameboard cell.
  */
-export const enum BoardCellState {
+export const enum GameboardCellState {
   /** The cell is unoccupied */
   Empty = 'empty',
 

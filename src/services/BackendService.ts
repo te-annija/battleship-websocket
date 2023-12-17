@@ -1,5 +1,5 @@
 /**
- * FILENAME: game.service.ts
+ * FILENAME: BackendService.ts
  * AUTHOR: Annija Karitone
  */
 
@@ -11,7 +11,7 @@ const API_URL = `${config.get('api')}/game`
 /**
  * Service to handle interaction with backend to save game data.
  */
-export class GameService {
+export class BackendService {
   /**
    * Sends a request to save a new game.
    * @param gameData The game data to be saved
@@ -29,4 +29,4 @@ export class GameService {
   }
 }
 
-export default new GameService()
+export default new BackendService()

@@ -6,52 +6,64 @@
 
 import { WebSocketServer, WebSocket } from 'ws'
 import config from 'config'
-import GameRoom from './models/GameRoom.js'
+import GameSession from './models/GameSession.js'
 import Player from './models/Player.js'
 import * as gameLogic from './gameLogic.js'
+import * as gameSessionLogic from './gameSessionLogic.js'
+import redisService from './services/RedisService.js'
+import { GameSessionType } from 'enums/GameSessionType.js'
 
 const serverPort: number = config.has('server.ports') ? config.get('server.ports') : 8080
 const wss: WebSocketServer = new WebSocketServer({
   port: serverPort
 })
-const players: Map<string, Player> = new Map()
+
 const connections: Map<string, WebSocket> = new Map()
-const gamerooms: Map<string, GameRoom> = new Map()
+const availiableSessions: string[] = []
 
 /**
  * Websocket server connection
  */
-wss.on('connection', (ws: WebSocket, request) => {
+wss.on('connection', async (ws: WebSocket, request) => {
   console.log('A player connected')
 
   // Handle Player initial data
   const cookieUid = getUidFromCookies(request.headers.cookie ?? '')
-  const id: string = cookieUid !== '' ? cookieUid : generateRandomString('player')
-  let player: Player | undefined
+  const id: string = cookieUid !== '' ? cookieUid : await generateRandomString('player')
+  let player: Player | undefined = await redisService.getPlayerData(id)
 
-  if (players.has(id)) {
-    // Player is already started session before
-    player = players.get(id)
-    if (player) {
-      connections.set(id, ws)
-      const gameroom: GameRoom | undefined = player.gameRoomId
-        ? gamerooms.get(player.gameRoomId)
-        : undefined
-      gameLogic.handlePlayerSessionStart(ws, player, gameroom)
-    }
-  } else {
-    // New user session
-    player = new Player(id, 'test-' + id)
-    gameLogic.handlePlayerSessionStart(ws, player)
-    players.set(id, player)
+  if (player) {
+    // User is already started session before.
     connections.set(id, ws)
+    const gameSession: GameSession | undefined = player.gameSessionId
+      ? await redisService.getGameSessionObject(player.gameSessionId)
+      : undefined
+
+    const opponent: Player | undefined = await getOpponentData(player.id, gameSession)
+
+    await gameSessionLogic.handlePlayerSessionStart(ws, player, gameSession, opponent)
+  } else {
+    // New user session.
+    player = new Player(id, 'test-' + id)
+    connections.set(id, ws)
+    await gameSessionLogic.handlePlayerSessionStart(ws, player)
   }
+
+  await redisService.setPlayerData(player)
 
   // Handle WebSocket messages
   ws.on('message', async (data: string) => {
     console.log('received: %s', data)
 
     if (!player) {
+      ws.close()
+      return
+    }
+
+    player = await redisService.getPlayerData(player.id)
+
+    if (!player) {
+      ws.close()
       return
     }
 
@@ -59,136 +71,162 @@ wss.on('connection', (ws: WebSocket, request) => {
 
     try {
       const message = JSON.parse(data)
-      console.log(message)
-      var gameroom =
-        player.gameRoomId && gamerooms.has(player.gameRoomId)
-          ? gamerooms.get(player.gameRoomId)
-          : undefined
-      var opponent: Player | undefined = gameroom
-        ? gameroom.player1 === player
-          ? gameroom.player2
-          : gameroom.player1
+
+      const gameSession: GameSession | undefined = player.gameSessionId
+        ? await redisService.getGameSessionObject(player.gameSessionId)
         : undefined
 
-      var opponentWs: WebSocket | undefined =
-        opponent && connections.has(opponent.id) ? connections.get(opponent.id) : undefined
+      const opponent: Player | undefined = await getOpponentData(player.id, gameSession)
+      const opponentWs: WebSocket | undefined = opponent ? connections.get(opponent.id) : undefined
 
       switch (message.type) {
-        case 'randomize-ships':
-          gameLogic.handleRandomizeShips(ws, player, gameroom)
-          break
-        case 'reset-ships':
-          gameLogic.handleResetShips(ws, player, gameroom)
-          break
         case 'place-ship':
-          gameLogic.handlePlaceShip(ws, player, gameroom, message.data)
+          gameLogic.handlePlaceShip(ws, player, message.data, gameSession)
+          break
+        case 'randomize-ships':
+          gameLogic.handleRandomizeShips(ws, player, gameSession)
           break
         case 'remove-ship':
-          gameLogic.handleRemoveShip(ws, player, gameroom, message.data)
+          gameLogic.handleRemoveShip(ws, player, message.data, gameSession)
           break
-        case 'attack-cell':
-          await gameLogic.handleAttackCell(ws, player, gameroom, message.data, opponent, opponentWs)
-
+        case 'reset-ships':
+          gameLogic.handleResetShips(ws, player, gameSession)
           break
-        case 'create-room': {
-          const newGameRoom = gameLogic.handleCreateRoom(
+        case 'attack-cell': {
+          await gameLogic.handleAttackCell(
             ws,
             player,
-            generateRandomString('gameroom'),
-            message.data
+            message.data,
+            gameSession,
+            opponent,
+            opponentWs
           )
-          gamerooms.set(newGameRoom.id, newGameRoom)
 
-          if (message.data && message.data.type && message.data.type == 'computer') {
-            gameLogic.handleAddAIPlayer(ws, newGameRoom, generateRandomString('player'))
-            newGameRoom.isGameStarted = true
+          if (opponent) {
+            redisService.setPlayerData(opponent)
           }
 
           break
         }
-        case 'leave-game':
-          gameLogic.handleLeaveGame(ws, player, gameroom, opponentWs)
-          if (gameroom && !gameroom.player1 && !gameroom.player2) {
-            gamerooms.delete(gameroom.id)
+        case 'join-game-random': {
+          // Handle join game against random opponent.
+          let gameSessionAvailiable: GameSession | undefined
+
+          for (let i = availiableSessions.length - 1; i >= 0; i--) {
+            gameSessionAvailiable = await redisService.getGameSessionObject(availiableSessions[i])
+
+            if (!gameSessionAvailiable) {
+              availiableSessions.splice(i, 1)
+            } else if (gameSessionLogic.handleIsAvailiableSession(gameSessionAvailiable)) {
+              availiableSessions.splice(i, 1)
+              break
+            }
           }
 
-          break
-        case 'rematch-game':
-          gameLogic.handleRematchGame(ws, player, gameroom, opponent)
+          if (gameSessionAvailiable) {
+            const opponentRandom: Player | undefined = await getOpponentData(
+              player.id,
+              gameSessionAvailiable
+            )
+            const opponentRandomWs: WebSocket | undefined = opponentRandom
+              ? connections.get(opponentRandom.id)
+              : undefined
 
-          break
-        case 'join-room': {
-          if (message.data && message.data.id) {
-            if (gameroom && gameroom.id === message.data.id) {
-              gameLogic.handleJoinRoom(ws, player, gameroom, opponentWs)
-              return
-            }
-
-            const gameroomFriend = gamerooms.get(message.data.id)
-            if (!gameroomFriend) {
-              throw new Error(
-                'The gameroom not found. Please recheck if the link is valid and friend is still in the gameroom.'
-              )
-            }
-
-            if (gameroomFriend.player2 && gameroomFriend.player2 !== player) {
-              throw new Error('Failed to join the gameroom. The gameroom is already full.')
-            }
-
-            if (
-              gameroomFriend.isGameStarted &&
-              (!gameroomFriend.player1 || !gameroomFriend.player2)
-            ) {
-              throw new Error('Failed to join the gameroom. The game is already ended.')
-            }
-
-            const opponentNew: Player | undefined = gameroomFriend.player1
-              ? gameroomFriend.player1
-              : gameroomFriend.player2
-
-            const opponentWsNew: WebSocket | undefined =
-              opponentNew && connections.has(opponentNew.id)
-                ? connections.get(opponentNew.id)
-                : undefined
-
-            if (!opponentWsNew) {
-              throw new Error('Could not join the gameroom. The friend is not connected to game.')
-            }
-
-            gameLogic.handleJoinRoom(ws, player, gameroomFriend, opponentWsNew)
+            await gameSessionLogic.handleJoinSession(
+              ws,
+              player,
+              gameSessionAvailiable,
+              opponentRandom,
+              opponentRandomWs
+            )
+            gameSessionLogic.handleStartGame(ws, player, gameSessionAvailiable, opponentRandomWs)
+            redisService.setGameSessionData(gameSessionAvailiable)
           } else {
-            const gameroomAvailiable = Array.from(gamerooms.values()).find(
-              (room) =>
-                room.player1 &&
-                room.player2 === undefined &&
-                room.type === 'random' &&
-                connections.has(room.player1.id)
+            const newGameSession = gameSessionLogic.handleCreateSession(
+              ws,
+              player,
+              await generateRandomString('gameSession'),
+              message.data
             )
 
-            if (gameroomAvailiable) {
-              const opponentWsNew: WebSocket | undefined = gameroomAvailiable.player1
-                ? connections.get(gameroomAvailiable.player1.id)
-                : undefined
-
-              if (opponentWsNew) {
-                gameLogic.handleJoinRoom(ws, player, gameroomAvailiable, opponentWsNew)
-                gameLogic.handleStartGame(ws, player, gameroomAvailiable, opponentWsNew)
-              }
-            } else {
-              const newGameRoom = gameLogic.handleCreateRoom(
-                ws,
-                player,
-                generateRandomString('gameroom'),
-                message.data
-              )
-              gamerooms.set(newGameRoom.id, newGameRoom)
-            }
+            availiableSessions.push(newGameSession.id)
+            redisService.setGameSessionData(newGameSession)
           }
+
           break
         }
-        case 'ready':
-          gameLogic.handleReady(ws, player, gameroom, opponentWs, message.data)
+        case 'join-game-friend': {
+          if (gameSession) {
+            await gameSessionLogic.handleJoinSession(ws, player, gameSession, opponent, opponentWs)
+            break
+          }
+
+          const gameSessionFriend: GameSession | undefined =
+            await redisService.getGameSessionObject(message.data.id)
+
+          if (!gameSessionLogic.handleIsValidFriendSession || !gameSessionFriend) {
+            throw new Error('Failed to join friend game session')
+          }
+
+          const opponentFriend: Player | undefined = await getOpponentData(
+            player.id,
+            gameSessionFriend
+          )
+          const opponentFriendWs: WebSocket | undefined = opponentFriend
+            ? connections.get(opponentFriend.id)
+            : undefined
+
+          await gameSessionLogic.handleJoinSession(
+            ws,
+            player,
+            gameSessionFriend,
+            opponentFriend,
+            opponentFriendWs
+          )
+          redisService.setGameSessionData(gameSessionFriend)
+
           break
+        }
+        case 'create-game': {
+          const newGameSession = gameSessionLogic.handleCreateSession(
+            ws,
+            player,
+            await generateRandomString('gameSession'),
+            message.data
+          )
+
+          if (message.data && message.data.type === GameSessionType.Computer) {
+            gameSessionLogic.handleAddAIPlayer(
+              ws,
+              newGameSession,
+              await generateRandomString('player')
+            )
+            gameSessionLogic.handleStartGame(ws, player, newGameSession, undefined)
+          }
+
+          redisService.setGameSessionData(newGameSession)
+
+          break
+        }
+        case 'leave-game': {
+          gameSessionLogic.handleLeaveGame(ws, player, gameSession, opponentWs)
+          break
+        }
+        case 'rematch-game': {
+          gameSessionLogic.handleRematchGame(ws, player, gameSession, opponent)
+          break
+        }
+        case 'ready': {
+          gameSessionLogic.handleReady(ws, player, message.data, gameSession, opponentWs)
+
+          break
+        }
+      }
+
+      redisService.setPlayerData(player)
+
+      if (gameSession) {
+        redisService.setGameSessionData(gameSession)
       }
     } catch (error: any) {
       console.log(error)
@@ -208,19 +246,11 @@ wss.on('connection', (ws: WebSocket, request) => {
   // Handle WebSocket disconnects
   ws.on('close', () => {
     console.log('A player disconnected')
-    if (player && player.gameRoomId && gamerooms.has(player.gameRoomId)) {
-      const gameroom: GameRoom | undefined = gamerooms.get(player.gameRoomId)
-      // Exit computer gane waiting room if game is not yet started
-      if (gameroom && !gameroom.isGameStarted && gameroom.type === 'computer') {
-        gamerooms.delete(gameroom.id)
-        player.gameRoomId = undefined
-      }
+    if (player) {
+      connections.delete(player.id)
     }
   })
 })
-
-// Close inactive connections every 5 minutes
-setInterval(closeInactiveConnections, 5 * 60 * 1000)
 
 /**
  * Get user ID from the cookie.
@@ -242,58 +272,48 @@ function getUidFromCookies(cookies: string): string {
 }
 
 /**
- * Return randomly generated string and checks if no user or gameroom is assigned already.
- * @param type The object type that needs a unique ID (eg, player, gameroom).
- * @returns Randomly generated user ID.
+ * Get current opponent data from the game session.
+ * @param playerId The identification of the current player.
+ * @param gameSession The current game session data.
+ * @returns The player object containing opponent data.
  */
-function generateRandomString(type: string = ''): string {
-  let ID = Math.random().toString(36).substring(4)
-
-  if (type === 'player') {
-    while (players.has(ID)) {
-      ID = Math.random().toString(36).substring(4)
-    }
-  } else if (type === 'gameroom') {
-    while (gamerooms.has(ID)) {
-      ID = Math.random().toString(36).substring(4)
-    }
+async function getOpponentData(
+  playerId: string,
+  gameSession?: GameSession
+): Promise<Player | undefined> {
+  if (!gameSession) {
+    return undefined
   }
 
-  return ID
+  if (gameSession.playerAI) {
+    return gameSession.playerAI
+  }
+
+  const opponentId: string | undefined = gameSession
+    ? gameSession.player1 === playerId
+      ? gameSession.player2
+      : gameSession.player1
+    : undefined
+
+  if (!opponentId) {
+    return undefined
+  }
+
+  return await redisService.getPlayerData(opponentId)
 }
 
 /**
- * Check and close inactive connections if user is not reached Websocket in 15 minutes
+ * Return randomly generated string and checks if no user or game session is assigned already.
+ * @param type The object type that needs a unique ID (eg, player, gameSession).
+ * @returns Randomly generated user ID.
  */
-function closeInactiveConnections() {
-  const currentTime = new Date().getTime()
-  connections.forEach((ws, playerId) => {
-    const player = players.get(playerId)
-    const playerLastActiveTime = player ? player.lastActiveTime : 0
-    const fifteenMin = 15 * 60 * 1000
-    if (currentTime - playerLastActiveTime > fifteenMin) {
-      ws.close()
-      if (player && player.gameRoomId) {
-        const gameroom = gamerooms.get(player.gameRoomId)
-        const opponentWs =
-          gameroom && gameroom.player1 === player && gameroom.player2
-            ? connections.get(gameroom.player2.id)
-            : gameroom?.player1
-            ? connections.get(gameroom.player1.id)
-            : undefined
-
-        gameLogic.handleLeaveGame(ws, player, gameroom, opponentWs)
-      }
-      players.delete(playerId)
-      connections.delete(playerId)
-      console.log(`Closed inactive connection for player ${playerId}`)
+async function generateRandomString(type?: string): Promise<string> {
+  let ID = Math.random().toString(36).substring(4)
+  if (type) {
+    while (await redisService.existsData(`${type}:${ID}`)) {
+      console.log(await redisService.existsData(`${type}:${ID}`))
+      ID = Math.random().toString(36).substring(4)
     }
-  })
-
-  // Clear all inactive gamerooms
-  gamerooms.forEach((gameroom, gameroomId) => {
-    if (!gameroom.player1 && !gameroom.player2) {
-      gamerooms.delete(gameroomId)
-    }
-  })
+  }
+  return ID
 }

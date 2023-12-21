@@ -37,10 +37,11 @@ class RedisService {
         const playerDataParsed = JSON.parse(playerData)
         return new Player(
           playerDataParsed.id,
-          playerDataParsed.name,
+          playerDataParsed.username,
           playerDataParsed.gameboard,
           playerDataParsed.attackGameboard,
           playerDataParsed.gameSessionId,
+          playerDataParsed.difficulty,
           playerDataParsed.lastActiveTime
         )
       }

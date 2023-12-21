@@ -49,7 +49,6 @@ export default class PlayerAI extends Player {
     let isValidPosition = false
     while (!isValidPosition) {
       const target = this.targets.pop() ?? this.getRandomTarget()
-      console.log(this.attackGameboard.grid[target.row][target.col].state)
       if (this.attackGameboard.grid[target.row][target.col].state === GameboardCellState.Empty) {
         isValidPosition = true
         return target

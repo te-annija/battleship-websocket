@@ -15,7 +15,7 @@ export default class Player {
   id: string
 
   /** The public name of the player. */
-  name: string
+  username: string
 
   /** The player's own gameboard. */
   gameboard: Gameboard
@@ -26,19 +26,22 @@ export default class Player {
   /** The time of player last active action to Webserver. */
   lastActiveTime: number
 
+  difficulty?: number
+
   /** The id of the gameroom where player is currently playing. */
   gameSessionId?: string
 
   constructor(
     id: string,
-    name: string,
+    username: string,
     gameboard?: Gameboard,
     attackGameboard?: Gameboard,
     gameSessionId?: string,
+    difficulty?: number,
     lastActiveTime: number = new Date().getTime()
   ) {
     this.id = id
-    this.name = name
+    this.username = username
     this.gameboard = gameboard
       ? new Gameboard(gameboard.size, gameboard.grid, gameboard.ships)
       : new Gameboard()
@@ -46,6 +49,7 @@ export default class Player {
       ? new Gameboard(attackGameboard.size, attackGameboard.grid, attackGameboard.ships)
       : new Gameboard()
     this.lastActiveTime = lastActiveTime
+    this.difficulty = difficulty
     this.gameSessionId = gameSessionId
   }
 

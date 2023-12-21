@@ -10,6 +10,7 @@ import Player from './models/Player'
 import PlayerAI from './models/PlayerAI.js'
 import * as webScoketHelpers from './helpers/WebSocketHelpers.js'
 import { GameSessionType } from './enums/GameSessionType'
+import { handleEndOfGame } from './gameLogic.js'
 
 /**
  * Handle the player data if existing session needs to be restored.
@@ -43,7 +44,11 @@ export async function handlePlayerSessionStart(
         webScoketHelpers.sendAction(ws, 'opponent-disconnected')
       }
     } else {
-      await handleJoinSession(ws, player, gameSession, opponent)
+      try {
+        await handleJoinSession(ws, player, gameSession, opponent)
+      } catch (error: any) {
+        player.gameSessionId = undefined
+      }
     }
   }
 }
@@ -57,13 +62,13 @@ export async function handlePlayerSessionStart(
  * @param opponent The current data about the opponent.
  * @param opponentWs Current connection to opponent websocket.
  */
-export async function handleJoinSession(
+export function handleJoinSession(
   ws: WebSocket,
   player: Player,
   gameSession: GameSession,
   opponent?: Player,
   opponentWs?: WebSocket
-): Promise<void> {
+): void {
   if (player.gameSessionId && gameSession.id !== player.gameSessionId) {
     throw new Error('Failed to join the gameSession. Leave already started game first.')
   }
@@ -81,11 +86,15 @@ export async function handleJoinSession(
   }
 
   if (opponent) {
-    webScoketHelpers.sendOpponentData(ws, opponent)
+    webScoketHelpers.sendOpponentData(ws, opponent, gameSession.ready.get(opponent.id) === true)
 
     if (opponentWs) {
       // Notify the opponent that the player is joined.
-      webScoketHelpers.sendOpponentData(opponentWs, player)
+      webScoketHelpers.sendOpponentData(
+        opponentWs,
+        player,
+        gameSession.ready.get(player.id) === true
+      )
     }
   }
 }
@@ -112,7 +121,9 @@ export function handleCreateSession(
   const newgameSession = new GameSession(gameSessionId, sessionType, player.id)
   player.gameSessionId = newgameSession.id
   webScoketHelpers.sendAction(ws, 'game-created', { id: newgameSession.id, type: sessionType })
-  webScoketHelpers.sendAction(ws, 'player-joined')
+  if (sessionType !== GameSessionType.Computer) {
+    webScoketHelpers.sendAction(ws, 'player-joined')
+  }
 
   return newgameSession
 }
@@ -234,16 +245,19 @@ export function handleAddAIPlayer(
  * @param opponent The current data about the opponent.
  * @param opponentWs Current connection to opponent websocket.
  */
-export function handleLeaveGame(
+export async function handleLeaveGame(
   ws: WebSocket,
   player: Player,
   gameSession?: GameSession,
+  opponent?: Player,
   opponentWs?: WebSocket
-): void {
+): Promise<void> {
   if (gameSession) {
-    if (gameSession.isGameStarted) {
-      player.gameboard.cleanBoard()
-      player.attackGameboard.cleanBoard()
+    if (gameSession.isGameStarted && opponent) {
+      gameSession.winner = opponent.id
+      await handleEndOfGame(ws, player, gameSession, opponent, opponentWs, false)
+      gameSession.player1 = undefined
+      gameSession.player2 = undefined
     }
 
     if (gameSession.player1 && gameSession.player1 === player.id) {

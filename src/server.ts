@@ -12,6 +12,7 @@ import * as gameLogic from './gameLogic.js'
 import * as gameSessionLogic from './gameSessionLogic.js'
 import redisService from './services/RedisService.js'
 import { GameSessionType } from 'enums/GameSessionType.js'
+import backendService from './services/BackendService.js'
 
 const serverPort: number = config.has('server.ports') ? config.get('server.ports') : 8080
 const wss: WebSocketServer = new WebSocketServer({
@@ -28,8 +29,16 @@ wss.on('connection', async (ws: WebSocket, request) => {
   console.log('A player connected')
 
   // Handle Player initial data
-  const cookieUid = getUidFromCookies(request.headers.cookie ?? '')
-  const id: string = cookieUid !== '' ? cookieUid : await generateRandomString('player')
+  const cookieUid = getKeyFromCookies(request.headers.cookie ?? '', 'uid')
+  const userToken = getKeyFromCookies(request.headers.cookie ?? '', 'token')
+
+  const user = await backendService.getUserData(userToken)
+
+  const id: string = user
+    ? user.username
+    : cookieUid !== ''
+    ? cookieUid
+    : await generateRandomString('player')
   let player: Player | undefined = await redisService.getPlayerData(id)
 
   if (player) {
@@ -40,11 +49,14 @@ wss.on('connection', async (ws: WebSocket, request) => {
       : undefined
 
     const opponent: Player | undefined = await getOpponentData(player.id, gameSession)
-
     await gameSessionLogic.handlePlayerSessionStart(ws, player, gameSession, opponent)
   } else {
     // New user session.
-    player = new Player(id, 'test-' + id)
+    const playerUsername: string = user ? user.username : `player-${id}`
+    player = new Player(id, playerUsername)
+    if (user) {
+      player.difficulty = user.rank.difficulty
+    }
     connections.set(id, ws)
     await gameSessionLogic.handlePlayerSessionStart(ws, player)
   }
@@ -109,18 +121,27 @@ wss.on('connection', async (ws: WebSocket, request) => {
           break
         }
         case 'join-game-random': {
+          const user = await backendService.getUserData(userToken)
+          if (user) {
+            player.difficulty = user.rank.difficulty
+          }
+
           // Handle join game against random opponent.
           let gameSessionAvailiable: GameSession | undefined
 
           for (let i = availiableSessions.length - 1; i >= 0; i--) {
             gameSessionAvailiable = await redisService.getGameSessionObject(availiableSessions[i])
-
             if (!gameSessionAvailiable) {
               availiableSessions.splice(i, 1)
-            } else if (gameSessionLogic.handleIsAvailiableSession(gameSessionAvailiable)) {
+              continue
+            }
+
+            if (gameSessionLogic.handleIsAvailiableSession(gameSessionAvailiable)) {
               availiableSessions.splice(i, 1)
               break
             }
+
+            gameSessionAvailiable = undefined
           }
 
           if (gameSessionAvailiable) {
@@ -158,14 +179,20 @@ wss.on('connection', async (ws: WebSocket, request) => {
         case 'join-game-friend': {
           if (gameSession) {
             await gameSessionLogic.handleJoinSession(ws, player, gameSession, opponent, opponentWs)
+            if (gameSession.id !== message.data.id) {
+              throw new Error('Failed to join game session. Leave already started game.')
+            }
             break
           }
 
           const gameSessionFriend: GameSession | undefined =
             await redisService.getGameSessionObject(message.data.id)
 
-          if (!gameSessionLogic.handleIsValidFriendSession || !gameSessionFriend) {
-            throw new Error('Failed to join friend game session')
+          gameSessionLogic.handleIsValidFriendSession(player, gameSessionFriend)
+          if (!gameSessionFriend) {
+            throw new Error(
+              'The game session not found. Please recheck if the link is valid and friend is still in the game.'
+            )
           }
 
           const opponentFriend: Player | undefined = await getOpponentData(
@@ -209,7 +236,10 @@ wss.on('connection', async (ws: WebSocket, request) => {
           break
         }
         case 'leave-game': {
-          gameSessionLogic.handleLeaveGame(ws, player, gameSession, opponentWs)
+          await gameSessionLogic.handleLeaveGame(ws, player, gameSession, opponent, opponentWs)
+          if (opponent) {
+            redisService.setPlayerData(opponent)
+          }
           break
         }
         case 'rematch-game': {
@@ -253,12 +283,12 @@ wss.on('connection', async (ws: WebSocket, request) => {
 })
 
 /**
- * Get user ID from the cookie.
+ * Get key from the cookie.
  * @param cookies Cookies from the request header data.
- * @returns Returns user ID.
+ * @returns Returns value of the key.
  */
-function getUidFromCookies(cookies: string): string {
-  const cookieName = 'uid='
+function getKeyFromCookies(cookies: string, key: string): string {
+  const cookieName = `${key}=`
   try {
     for (const cookie of cookies.split('; ')) {
       if (cookie.indexOf(cookieName) == 0) {
@@ -311,7 +341,6 @@ async function generateRandomString(type?: string): Promise<string> {
   let ID = Math.random().toString(36).substring(4)
   if (type) {
     while (await redisService.existsData(`${type}:${ID}`)) {
-      console.log(await redisService.existsData(`${type}:${ID}`))
       ID = Math.random().toString(36).substring(4)
     }
   }

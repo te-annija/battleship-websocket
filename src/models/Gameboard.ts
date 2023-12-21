@@ -333,28 +333,20 @@ export default class Gameboard {
    * @param callback The callback function that executes for all cells that adjacent to the ship.
    */
   private iterateAdjacentCells(ship: Ship, callback: (row: number, col: number) => void): void {
-    for (let i = 0; i < ship.size; i++) {
-      const targetRow = ship.position.isVertical ? ship.position.row + i : ship.position.row
-      const targetCol = ship.position.isVertical ? ship.position.col : ship.position.col + i
+    const fromRow: number = ship.position.row - 1
+    const toRow: number = ship.position.isVertical
+      ? ship.position.row + ship.size
+      : ship.position.row + 1
 
-      const offsets = [
-        { row: 0, col: 0 },
-        { row: 0, col: -1 },
-        { row: 0, col: 1 },
-        { row: -1, col: 0 },
-        { row: 1, col: 0 },
-        { row: 1, col: 1 },
-        { row: 1, col: -1 },
-        { row: -1, col: 1 },
-        { row: -1, col: -1 }
-      ]
+    const fromCol: number = ship.position.col - 1
+    const toCol: number = ship.position.isVertical
+      ? ship.position.col + 1
+      : ship.position.col + ship.size
 
-      for (const offset of offsets) {
-        const offsetRow = targetRow + offset.row
-        const offsetCol = targetCol + offset.col
-
-        if (this.isCellWithinBoard(offsetRow, offsetCol)) {
-          callback(offsetRow, offsetCol)
+    for (let targetRow = fromRow; targetRow <= toRow; targetRow++) {
+      for (let targetCol = fromCol; targetCol <= toCol; targetCol++) {
+        if (this.isCellWithinBoard(targetRow, targetCol)) {
+          callback(targetRow, targetCol)
         }
       }
     }

@@ -11,6 +11,7 @@ import Ship from './models/Ship.js'
 import gameService from './services/BackendService.js'
 import * as webScoketHelpers from './helpers/WebSocketHelpers.js'
 import GameboardCell from 'models/GameboardCell.js'
+import { GameSessionType } from 'enums/GameSessionType.js'
 /**
  * Handle place one ship on board and update the player.
  *
@@ -165,7 +166,7 @@ export async function handleAttackCell(
   if (attackedCell.ship) {
     if (opponent.gameboard.allShipsSunk()) {
       gameSession.winner = player.id
-      handleEndOfGame(ws, player, gameSession, opponent, opponentWs)
+      await handleEndOfGame(ws, player, gameSession, opponent, opponentWs)
       return
     }
   } else {
@@ -196,7 +197,7 @@ export async function handleAttackCell(
       if (attackCell.ship) {
         if (player.gameboard.allShipsSunk()) {
           gameSession.winner = gameSession.playerAI.id
-          handleEndOfGame(ws, player, gameSession, opponent)
+          await handleEndOfGame(ws, player, gameSession, opponent)
           return
         }
       } else {
@@ -217,48 +218,42 @@ export async function handleAttackCell(
  * @param opponent Current data about the opponent.
  * @returns True if game has ended, false otherwise.
  */
-function handleEndOfGame(
+export async function handleEndOfGame(
   ws: WebSocket,
   player: Player,
   gameSession: GameSession,
   opponent?: Player,
-  opponentWs?: WebSocket
-): boolean {
+  opponentWs?: WebSocket,
+  sendGameEnded: boolean = true
+): Promise<boolean> {
   if (!gameSession.winner) {
     return false
   }
 
-  // Prepare data to sent to server (save in the db).
-  let gameData = {
-    winnerId: 1, // Temporary - should change to registred user id
-    gameType: gameSession.type,
-    player1: {
-      userId: 1, // Temporary - should change to registred user id
-      gameboard: player.gameboard,
-      attackGameboard: player.attackGameboard
-    },
-    player2: {}
-  }
+  const isPlayerWinner = player.id === gameSession.winner
 
-  if (opponent) {
-    gameData.player2 = {
-      userId: 2, // Temporary - should change to registred user id
-      gameboard: opponent.gameboard,
-      attackGameboard: opponent.attackGameboard
-    }
-  }
-
-  // Send data to save in the db.
-  gameService.saveGame(gameData)
+  const gameData = await handleSaveGame(
+    gameSession,
+    isPlayerWinner ? player : opponent,
+    isPlayerWinner ? opponent : player
+  )
 
   // Notify players game ended.
-  webScoketHelpers.sendAction(ws, 'game-ended', { hasWon: player.id === gameSession.winner })
+  if (sendGameEnded) {
+    webScoketHelpers.sendAction(ws, 'game-ended', {
+      isWinner: isPlayerWinner,
+      points: isPlayerWinner ? gameData.player1.points : gameData.player2.points
+    })
+  }
 
   if (opponent && opponentWs) {
     webScoketHelpers.sendAction(opponentWs, 'game-ended', {
-      hasWon: opponent.id === gameSession.winner
+      isWinner: !isPlayerWinner,
+      points: !isPlayerWinner ? gameData.player1.points : gameData.player2.points
     })
   }
+
+  // Clean both player gameboards to be reusable.
   gameSession.resetGame()
 
   player.gameboard.cleanBoard()
@@ -271,6 +266,45 @@ function handleEndOfGame(
   return true
 }
 
+/**
+ *
+ * @param player
+ * @param gameSession
+ * @param opponent
+ */
+async function handleSaveGame(gameSession: GameSession, winner?: Player, opponent?: Player) {
+  const points =
+    gameSession.type === GameSessionType.Random
+      ? winner && winner.difficulty && opponent && opponent.difficulty
+        ? 15 - (winner.difficulty - opponent.difficulty)
+        : 15
+      : 0
+
+  // Prepare data to sent to server (save in the db).
+  let gameData = {
+    winnerId: gameSession.winner,
+    gameType: gameSession.type,
+    player1: {
+      userId: winner ? winner.id : '',
+      difficulty: winner ? winner.difficulty : '',
+      gameboard: winner ? winner.gameboard : '',
+      attackGameboard: winner ? winner.attackGameboard : '',
+      points: winner ? points : ''
+    },
+    player2: {
+      userId: opponent ? opponent.id : '',
+      difficulty: opponent ? opponent.difficulty : '',
+      gameboard: opponent ? opponent.gameboard : '',
+      attackGameboard: opponent ? opponent.attackGameboard : '',
+      points: opponent ? -1 * points : ''
+    }
+  }
+
+  // Send data to save in the db.
+  await gameService.saveGame(gameData)
+
+  return gameData
+}
 /**
  * Helper function to timeout the code execution.
  * @param ms Time in miliseconds.

@@ -50,7 +50,7 @@ export function sendOpponentData(ws: WebSocket, opponent: Player, isReady: boole
       type: 'opponent',
       data: {
         id: opponent.id,
-        name: opponent.name,
+        username: opponent.username,
         isReady: isReady
       }
     })

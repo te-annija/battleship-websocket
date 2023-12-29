@@ -72,6 +72,7 @@ export default class Player {
     const attackCell = this.attackGameboard.grid[row][col]
 
     attackCell.state = enemyCell.state
+    attackCell.updatedAt = new Date().getTime()
 
     if (enemyCell.ship) {
       this.attackGameboard.setBorderingCellsAsMissed(row, col)

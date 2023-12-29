@@ -67,9 +67,17 @@ export default class Gameboard {
           const shipData: Ship | undefined = grid[i][j].ship
           const ship: Ship | undefined = shipData ? this.getShipById(shipData.id) : undefined
 
-          this.grid[i].push(new GameboardCell(grid[i][j].state, grid[i][j].adjacentCount, ship))
+          this.grid[i].push(
+            new GameboardCell(
+              grid[i][j].id,
+              grid[i][j].state,
+              grid[i][j].adjacentCount,
+              ship,
+              grid[i][j].updatedAt
+            )
+          )
         } else {
-          this.grid[i].push(new GameboardCell())
+          this.grid[i].push(new GameboardCell(i * 10 + j))
         }
       }
     }
@@ -176,6 +184,7 @@ export default class Gameboard {
 
     const cell = this.grid[row][col]
     const cellState = cell.state
+    cell.updatedAt = new Date().getTime()
 
     if (cellState === GameboardCellState.Empty || cellState === GameboardCellState.Adjacent) {
       cell.state = GameboardCellState.Miss
@@ -362,6 +371,7 @@ export default class Gameboard {
       const cell = this.grid[row][col]
       if (cell.state === GameboardCellState.Empty || cell.state === GameboardCellState.Adjacent) {
         cell.state = GameboardCellState.Miss
+        cell.updatedAt = new Date().getTime()
       }
     }
   }

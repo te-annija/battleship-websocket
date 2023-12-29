@@ -12,6 +12,7 @@ import gameService from './services/BackendService.js'
 import * as webScoketHelpers from './helpers/WebSocketHelpers.js'
 import GameboardCell from 'models/GameboardCell.js'
 import { GameSessionType } from 'enums/GameSessionType.js'
+import PlayerAI from 'models/PlayerAI.js'
 /**
  * Handle place one ship on board and update the player.
  *
@@ -114,7 +115,7 @@ export function handleResetShips(ws: WebSocket, player: Player, gameSession?: Ga
  *
  * @param ws Current connection websocket.
  * @param player Current data about player.
- * @param data The data indicating if player is ready to start the game.
+ * @param data The data indicating attack coordinates.
  * @param gameSession The current gameSession where player is connected.
  * @param opponent Current data about the opponent.
  * @param opponentWs Current connection to opponent websocket.
@@ -151,14 +152,62 @@ export async function handleAttackCell(
     throw new Error('Cannot make an attack. The game has already ended.')
   }
 
-  // Make an attack and return if it was invalid.
+  if (processAttack(gameSession, player, opponent, data, ws, opponentWs)) {
+    await handleEndOfGame(ws, player, gameSession, opponent, opponentWs)
+  }
+}
+
+/**
+ * Handle computer attack single cell attack on player gameboard and notify player.
+ * @param ws Current connection websocket.
+ * @param player Current data about player.
+ * @param gameSession The current gameSession where player is connected.
+ * @param opponent Current data about the opponent.
+ */
+export async function handleAiAttack(
+  ws: WebSocket,
+  player: Player,
+  gameSession: GameSession,
+  opponent: PlayerAI
+) {
+  const target = opponent.getAttackPosition()
+  if (processAttack(gameSession, opponent, player, target, undefined, ws)) {
+    await handleEndOfGame(ws, player, gameSession, opponent, undefined)
+  }
+}
+
+/**
+ * Process attack to the gameboard and notify the results.
+ * @param gameSession The current gameSession where player is connected.
+ * @param player Current data about player.
+ * @param opponent Current data about the opponent.
+ * @param data The data indicating attack coordinates.
+ * @param ws Current connection websocket.
+ * @param opponentWs Current connection to opponent websocket.
+ * @returns True if attack has been resulted to endgame, false otherwise.
+ */
+function processAttack(
+  gameSession: GameSession,
+  player: Player,
+  opponent: Player,
+  data: any,
+  ws?: WebSocket,
+  opponentWs?: WebSocket
+): boolean {
+  // Process attack.
   const attackedCell: GameboardCell = opponent.recieveAttack(data.row, data.col)
   player.saveAttackResult(data.row, data.col, attackedCell)
 
-  // Notify players about the results.
-  webScoketHelpers.sendPlayerData(ws, player)
+  if (gameSession.playerAI && gameSession.currentPlayer === gameSession.playerAI.id) {
+    gameSession.playerAI.processAfterAttack(data.row, data.col, attackedCell)
+  }
 
-  if (opponent && opponentWs) {
+  // Notify players about the results.
+  if (ws) {
+    webScoketHelpers.sendPlayerData(ws, player)
+  }
+
+  if (opponentWs) {
     webScoketHelpers.sendPlayerData(opponentWs, opponent)
   }
 
@@ -166,17 +215,18 @@ export async function handleAttackCell(
   if (attackedCell.ship) {
     if (opponent.gameboard.allShipsSunk()) {
       gameSession.winner = player.id
-      await handleEndOfGame(ws, player, gameSession, opponent, opponentWs)
-      return
+      return true
     }
   } else {
     gameSession.switchPlayer()
   }
 
   // Notify users about turns.
-  webScoketHelpers.sendAction(ws, 'game-turn', {
-    isPlayerTurn: gameSession.currentPlayer === player.id
-  })
+  if (ws) {
+    webScoketHelpers.sendAction(ws, 'game-turn', {
+      isPlayerTurn: gameSession.currentPlayer === player.id
+    })
+  }
 
   if (opponentWs) {
     webScoketHelpers.sendAction(opponentWs, 'game-turn', {
@@ -184,30 +234,7 @@ export async function handleAttackCell(
     })
   }
 
-  // AI attack to the player if game is against computer.
-  if (gameSession.currentPlayer !== player.id && gameSession.playerAI) {
-    while (gameSession.currentPlayer === gameSession.playerAI.id) {
-      const target = gameSession.playerAI.getAttackPosition()
-      const attackCell: GameboardCell = player.recieveAttack(target.row, target.col)
-      gameSession.playerAI.saveAttackResult(target.row, target.col, attackCell)
-      gameSession.playerAI.processAfterAttack(target.row, target.col, attackCell)
-      await delay(1000)
-      webScoketHelpers.sendPlayerData(ws, player)
-      // Check if game can be ended.
-      if (attackCell.ship) {
-        if (player.gameboard.allShipsSunk()) {
-          gameSession.winner = gameSession.playerAI.id
-          await handleEndOfGame(ws, player, gameSession, opponent)
-          return
-        }
-      } else {
-        gameSession.switchPlayer()
-      }
-    }
-    webScoketHelpers.sendAction(ws, 'game-turn', {
-      isPlayerTurn: gameSession.currentPlayer === player.id
-    })
-  }
+  return false
 }
 
 /**
@@ -304,13 +331,4 @@ async function handleSaveGame(gameSession: GameSession, winner?: Player, opponen
   await gameService.saveGame(gameData)
 
   return gameData
-}
-/**
- * Helper function to timeout the code execution.
- * @param ms Time in miliseconds.
- */
-async function delay(ms: number): Promise<any> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
 }

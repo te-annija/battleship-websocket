@@ -316,14 +316,15 @@ export function handleRematchGame(
  * @param data The data indicating if player is ready to start the game.
  * @param gameSession The current gameSession where player is connected.
  * @param opponentWs Current connection to opponent websocket.
+ * @returns True if both players are ready, false otherwise.
  */
-export async function handleReady(
+export function handleReady(
   ws: WebSocket,
   player: Player,
   data: any,
   gameSession?: GameSession,
   opponentWs?: WebSocket
-) {
+): boolean {
   if (!gameSession || !data) {
     throw new Error('Could not change ready status')
   }
@@ -336,10 +337,15 @@ export async function handleReady(
     if (gameSession.isReady()) {
       // Both players are ready, start the game
       handleStartGame(ws, player, gameSession, opponentWs)
+      return true
     }
   }
 
   if (gameSession.type === GameSessionType.Computer && gameSession.playerAI) {
     handleAddAIPlayer(ws, gameSession, gameSession.playerAI.id)
+    handleStartGame(ws, player, gameSession)
+    return true
   }
+
+  return false
 }

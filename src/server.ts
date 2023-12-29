@@ -13,6 +13,9 @@ import * as gameSessionLogic from './gameSessionLogic.js'
 import redisService from './services/RedisService.js'
 import { GameSessionType } from 'enums/GameSessionType.js'
 import backendService from './services/BackendService.js'
+import * as webScoketHelpers from './helpers/WebSocketHelpers.js'
+
+const TIMER_DURATION_SECONDS = 90
 
 const serverPort: number = config.has('server.ports') ? config.get('server.ports') : 8080
 const wss: WebSocketServer = new WebSocketServer({
@@ -20,6 +23,7 @@ const wss: WebSocketServer = new WebSocketServer({
 })
 
 const connections: Map<string, WebSocket> = new Map()
+const timers: Map<string, any> = new Map()
 const availiableSessions: string[] = []
 
 /**
@@ -50,6 +54,9 @@ wss.on('connection', async (ws: WebSocket, request) => {
 
     const opponent: Player | undefined = await getOpponentData(player.id, gameSession)
     await gameSessionLogic.handlePlayerSessionStart(ws, player, gameSession, opponent)
+    if (gameSession && timers.has(gameSession.id)) {
+      webScoketHelpers.sendAction(ws, 'timer', { timer: timers.get(gameSession.id).remainingTime })
+    }
   } else {
     // New user session.
     const playerUsername: string = user ? user.username : `player-${id}`
@@ -92,9 +99,10 @@ wss.on('connection', async (ws: WebSocket, request) => {
       const opponentWs: WebSocket | undefined = opponent ? connections.get(opponent.id) : undefined
 
       switch (message.type) {
-        case 'place-ship':
+        case 'place-ship': {
           gameLogic.handlePlaceShip(ws, player, message.data, gameSession)
           break
+        }
         case 'randomize-ships':
           gameLogic.handleRandomizeShips(ws, player, gameSession)
           break
@@ -105,6 +113,8 @@ wss.on('connection', async (ws: WebSocket, request) => {
           gameLogic.handleResetShips(ws, player, gameSession)
           break
         case 'attack-cell': {
+          stopTimerForGameSession(gameSession)
+
           await gameLogic.handleAttackCell(
             ws,
             player,
@@ -114,10 +124,35 @@ wss.on('connection', async (ws: WebSocket, request) => {
             opponentWs
           )
 
-          if (opponent) {
-            redisService.setPlayerData(opponent)
+          // AI attack to the player if game is against computer.
+          if (gameSession && gameSession.playerAI) {
+            while (gameSession.currentPlayer === gameSession.playerAI.id) {
+              stopTimerForGameSession(gameSession)
+              startTimerForGameSession(ws, player, gameSession, gameSession.playerAI)
+
+              const freshGameSession = await redisService.getGameSessionObject(gameSession.id)
+              await delay(2000)
+
+              if (freshGameSession && !freshGameSession.winner && freshGameSession.isGameStarted) {
+                await gameLogic.handleAiAttack(ws, player, gameSession, gameSession.playerAI)
+                await redisService.setGameSessionData(gameSession)
+                stopTimerForGameSession(gameSession)
+              } else {
+                stopTimerForGameSession(gameSession)
+                break
+              }
+            }
           }
 
+          if (opponent && gameSession) {
+            if (!gameSession.playerAI) {
+              redisService.setPlayerData(opponent)
+            }
+
+            if (gameSession.isGameStarted) {
+              startTimerForGameSession(ws, player, gameSession, opponent, opponentWs)
+            }
+          }
           break
         }
         case 'join-game-random': {
@@ -162,6 +197,15 @@ wss.on('connection', async (ws: WebSocket, request) => {
             )
             gameSessionLogic.handleStartGame(ws, player, gameSessionAvailiable, opponentRandomWs)
             redisService.setGameSessionData(gameSessionAvailiable)
+            if (opponentRandom) {
+              startTimerForGameSession(
+                ws,
+                player,
+                gameSessionAvailiable,
+                opponentRandom,
+                opponentRandomWs
+              )
+            }
           } else {
             const newGameSession = gameSessionLogic.handleCreateSession(
               ws,
@@ -229,6 +273,9 @@ wss.on('connection', async (ws: WebSocket, request) => {
               await generateRandomString('player')
             )
             gameSessionLogic.handleStartGame(ws, player, newGameSession, undefined)
+            if (newGameSession.playerAI) {
+              startTimerForGameSession(ws, player, newGameSession, newGameSession.playerAI)
+            }
           }
 
           redisService.setGameSessionData(newGameSession)
@@ -247,8 +294,24 @@ wss.on('connection', async (ws: WebSocket, request) => {
           break
         }
         case 'ready': {
-          gameSessionLogic.handleReady(ws, player, message.data, gameSession, opponentWs)
+          const isGameStarted = gameSessionLogic.handleReady(
+            ws,
+            player,
+            message.data,
+            gameSession,
+            opponentWs
+          )
 
+          if (isGameStarted && gameSession) {
+            if (gameSession.type === GameSessionType.Computer && gameSession.playerAI) {
+              startTimerForGameSession(ws, player, gameSession, gameSession.playerAI)
+              break
+            } else if (opponent) {
+              startTimerForGameSession(ws, player, gameSession, opponent, opponentWs)
+              break
+            }
+            gameSessionLogic.handleLeaveGame(ws, player, gameSession, opponent, opponentWs)
+          }
           break
         }
       }
@@ -345,4 +408,73 @@ async function generateRandomString(type?: string): Promise<string> {
     }
   }
   return ID
+}
+
+/**
+ * Handle timer for players turns and handle game end logic if timer has expired.
+ * @param ws Current connection websocket.
+ * @param player Current data about player.
+ * @param gameSession The current gameSession where player is connected.
+ * @param opponent Current data about the opponent.
+ * @param opponentWs Current connection to opponent websocket.
+ */
+function startTimerForGameSession(
+  ws: WebSocket,
+  player: Player,
+  gameSession: GameSession,
+  opponent: Player,
+  opponentWs?: WebSocket
+): void {
+  let timer = TIMER_DURATION_SECONDS
+
+  webScoketHelpers.sendAction(ws, 'timer', { timer: timer })
+  if (opponentWs) {
+    webScoketHelpers.sendAction(opponentWs, 'timer', { timer: timer })
+  }
+
+  const interval = setInterval(async () => {
+    if (timer === 0) {
+      clearInterval(timers.get(gameSession.id).interval)
+      timers.delete(gameSession.id)
+      webScoketHelpers.sendAction(ws, 'timer-ended', { timer: timer })
+      if (opponentWs) {
+        webScoketHelpers.sendAction(opponentWs, 'timer-ended', { timer: timer })
+      }
+      const freshGameSession = await redisService.getGameSessionObject(gameSession.id)
+
+      if (freshGameSession && freshGameSession.isGameStarted) {
+        freshGameSession.winner = gameSession.currentPlayer === player.id ? opponent.id : player.id
+        await gameLogic.handleEndOfGame(ws, player, freshGameSession, opponent, opponentWs)
+
+        redisService.setGameSessionData(freshGameSession)
+        redisService.setPlayerData(player)
+        redisService.setPlayerData(opponent)
+      }
+    }
+    timer--
+    timers.set(gameSession.id, { interval, remainingTime: timer })
+  }, 1000)
+
+  timers.set(gameSession.id, { interval, remainingTime: timer })
+}
+
+/**
+ * Removes timer from the game session.
+ * @param gameSession The current gameSession where player is connected.
+ */
+function stopTimerForGameSession(gameSession?: GameSession): void {
+  if (gameSession && timers.has(gameSession.id)) {
+    clearInterval(timers.get(gameSession.id).interval)
+    timers.delete(gameSession.id)
+  }
+}
+
+/**
+ * Helper function to timeout the code execution.
+ * @param ms Time in miliseconds.
+ */
+async function delay(ms: number): Promise<any> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 }

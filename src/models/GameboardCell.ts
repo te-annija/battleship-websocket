@@ -21,6 +21,7 @@ export default class GameboardCell {
   /** The number of adjacent ships to the cell. */
   adjacentCount: number
 
+  /** The datetime of the attack on the cell. */
   updatedAt: number
 
   constructor(

@@ -6,7 +6,7 @@ export const enum GameSessionType {
   Friend = 'friend',
 
   /** The game is played against randomly selected opponent. */
-  Random = 'random',
+  Online = 'online',
 
   /** The game is played against computer. */
   Computer = 'computer'

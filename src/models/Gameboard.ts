@@ -16,22 +16,25 @@ export default class Gameboard {
   /** The row and column count of the gameboard in units. */
   size: number
 
-  /** The minimum coordinate value. */
-  coord_min: number
-
-  /** The maximum coordinate value (size - 1). */
-  coord_max: number
-
   /** A 2D grid containing board cells with the same rows and columns as size. */
   grid: GameboardCell[][]
 
   /** All ships on the board. */
   ships: Ship[]
 
-  constructor(size: number = config.get('boardSize'), grid?: GameboardCell[][], ships?: Ship[]) {
+  /** Last opponent attack coordinates on the gameboard. */
+  lastAttack: {
+    row: number
+    col: number
+  }
+
+  constructor(
+    size: number = config.get('boardSize'),
+    grid?: GameboardCell[][],
+    ships?: Ship[],
+    lastAttack?: any
+  ) {
     this.size = size
-    this.coord_min = 0
-    this.coord_max = size - 1
 
     // Initializing the ships array based on ship configurations.
     this.ships = []
@@ -81,6 +84,7 @@ export default class Gameboard {
         }
       }
     }
+    this.lastAttack = lastAttack
   }
 
   /**
@@ -142,7 +146,7 @@ export default class Gameboard {
   /**
    * Resets all ship positions and cell states on board.
    */
-  cleanBoard(): void {
+  private cleanBoard(): void {
     for (let i = 0; i < this.grid.length; i++) {
       for (let j = 0; j < this.grid[i].length; j++) {
         this.grid[i][j].ship = undefined
@@ -169,7 +173,7 @@ export default class Gameboard {
    * @returns Returns true if all ships are successfully placed on the board; otherwise, returns false.
    */
   isAllShipsOnBoard(): boolean {
-    return this.ships.every((ship) => ship.isShipOnBoard())
+    return this.ships.every((ship) => ship.isOnBoard)
   }
 
   /**
@@ -177,7 +181,7 @@ export default class Gameboard {
    * @param row The row index of the target cell.
    * @param col The column index of the target cell.
    */
-  attack(row: number, col: number): GameboardCell {
+  recieveAttack(row: number, col: number): GameboardCell {
     if (!this.isCellWithinBoard(row, col)) {
       throw new Error('Invalid guess coordinates.')
     }
@@ -240,12 +244,7 @@ export default class Gameboard {
    * @returns Returns true if cell is within boarders.
    */
   isCellWithinBoard(rowIndex: number, colIndex: number): boolean {
-    return (
-      rowIndex <= this.coord_max &&
-      rowIndex >= this.coord_min &&
-      colIndex <= this.coord_max &&
-      colIndex >= this.coord_min
-    )
+    return rowIndex <= this.size - 1 && rowIndex >= 0 && colIndex <= this.size - 1 && colIndex >= 0
   }
 
   /**
@@ -255,6 +254,34 @@ export default class Gameboard {
    */
   getShipById(shipId: string): Ship | undefined {
     return this.ships.find((ship) => ship.id === shipId)
+  }
+
+  /**
+   * Saves attack result to attack gameboard.
+   * @param row The target row index of the attack.
+   * @param col The target column index of the attack.
+   * @param enemyCell The result of the attack from the opponent gameboard.
+   */
+  saveAttackResult(row: number, col: number, enemyCell: GameboardCell): void {
+    const attackCell = this.grid[row][col]
+
+    attackCell.state = enemyCell.state
+    attackCell.updatedAt = new Date().getTime()
+
+    if (enemyCell.ship) {
+      this.setBorderingCellsAsMissed(row, col)
+
+      if (enemyCell.ship.isSunk()) {
+        this.setAdjacentCellsAsMissed(enemyCell.ship)
+        const ship: Ship | undefined = this.getShipById(enemyCell.ship.id)
+        if (ship) {
+          ship.position = enemyCell.ship.position
+          ship.hits = enemyCell.ship.hits
+
+          this.grid[ship.position.row][ship.position.col].ship = ship
+        }
+      }
+    }
   }
 
   /**
@@ -327,8 +354,8 @@ export default class Gameboard {
     let position: ShipPosition = new ShipPosition()
     position.isVertical = Math.random() < 0.5 ? true : false
 
-    const maxRow = position.isVertical ? this.coord_max - ship.size + 1 : this.coord_max
-    const maxCol = position.isVertical ? this.coord_max : this.coord_max - ship.size + 1
+    const maxRow = position.isVertical ? this.size - ship.size : this.size - 1
+    const maxCol = position.isVertical ? this.size - 1 : this.size - ship.size
 
     position.row = Math.floor(Math.random() * (maxRow + 1))
     position.col = Math.floor(Math.random() * (maxCol + 1))

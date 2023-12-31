@@ -2,6 +2,8 @@
  * FILENAME: RedisService.ts
  * AUTHOR: Annija Karitone
  */
+import PlayerComputer from '../models/PlayerComputer.js'
+import Gameboard from '../models/Gameboard.js'
 import GameSession from '../models/GameSession.js'
 import Player from '../models/Player.js'
 import Redis from 'ioredis'
@@ -15,13 +17,51 @@ class RedisService {
   }
 
   /**
+   * Request to save gameboard data for a player.
+   * @param playerId The identification of a player to save gameboard data.
+   * @param gameboard The gameboard data to save.
+   * @param type The type of the gameboard (player or attack)
+   * @returns The response if saving was successful.
+   */
+  async setGameboard(
+    playerId: string,
+    gameboard: Gameboard,
+    type: string = 'player'
+  ): Promise<any> {
+    const response = await this.setData(`Gameboard:${playerId}${type}`, JSON.stringify(gameboard))
+    this.client.expire(`Gameboard:${playerId}player`, 12000)
+    this.client.expire(`Gameboard:${playerId}attack`, 12000)
+    this.client.expire(`Player:${playerId}`, 12000)
+    return response
+  }
+
+  /**
+   * Request to get gameboard data for a player.
+   * @param playerId The identification of a player to retrieve gameboard data.
+   * @param type The type of the gameboard (player or attack)
+   * @returns The gameboard data associated with the player.
+   */
+  async getGameboard(playerId: string, type: string = 'player'): Promise<Gameboard> {
+    try {
+      const gameboardData = await this.getData(`Gameboard:${playerId}${type}`)
+      if (gameboardData) {
+        const { size, grid, ships } = JSON.parse(gameboardData)
+        return new Gameboard(size, grid, ships)
+      }
+      throw new Error('Something went wrong, please reload the page!')
+    } catch (error) {
+      throw new Error('Something went wrong, please reload the page!')
+    }
+  }
+
+  /**
    * Request to save player data.
    * @param player The player data to save.
    * @returns The response if saving was successful.
    */
-  async setPlayerData(player: Player): Promise<any> {
-    const respone = this.setData(`player:${player.id}`, JSON.stringify(player))
-    this.client.expire(`player:${player.id}`, 12000)
+  async setPlayer(player: Player | PlayerComputer): Promise<any> {
+    const respone = this.setData(`Player:${player.id}`, JSON.stringify(player))
+    this.client.expire(`Player:${player.id}`, 12000)
     return respone
   }
 
@@ -30,20 +70,11 @@ class RedisService {
    * @param playerId The identification of a player to retrieve.
    * @returns The player object with data and methods.
    */
-  async getPlayerData(playerId: string): Promise<Player | undefined> {
+  async getPlayer(playerId: string): Promise<Player | undefined> {
     try {
-      const playerData: string = await this.getData(`player:${playerId}`)
+      const playerData: string = await this.getData(`Player:${playerId}`)
       if (playerData) {
-        const playerDataParsed = JSON.parse(playerData)
-        return new Player(
-          playerDataParsed.id,
-          playerDataParsed.username,
-          playerDataParsed.gameboard,
-          playerDataParsed.attackGameboard,
-          playerDataParsed.gameSessionId,
-          playerDataParsed.difficulty,
-          playerDataParsed.lastActiveTime
-        )
+        return JSON.parse(playerData)
       }
       return undefined
     } catch (error) {
@@ -53,21 +84,46 @@ class RedisService {
   }
 
   /**
+   * Request to get computer player data.
+   * @param playerId The identification of a computer player to retrieve.
+   * @returns The computer player object with data and methods.
+   */
+  async getPlayerComputer(playerId: string): Promise<PlayerComputer | undefined> {
+    try {
+      const playerData: string = await this.getData(`Player:${playerId}`)
+      if (playerData) {
+        const { id, targets } = JSON.parse(playerData)
+        return new PlayerComputer(id, targets)
+      }
+      return undefined
+    } catch (error) {
+      console.error('Error getting player data:', error)
+      return undefined
+    }
+  }
+
+  /**
+   * Request to delete player data and gameboards.
+   * @param playerId The identification of a player
+   */
+  async deletePlayer(playerId: string) {
+    this.client.del(`Player:${playerId}`)
+    this.client.del(`Gameboard:${playerId}player`)
+    this.client.del(`Gameboard:${playerId}attack`)
+  }
+
+  /**
    * Request to save game session data.
    * @param gameSession The game session data to save.
    * @returns The response if saving was successful.
    */
-  async setGameSessionData(gameSession: GameSession): Promise<any> {
-    const gameSessionStringifiable = {
-      ...gameSession,
-      ready: Array.from(gameSession.ready.entries())
-    }
+  async setGameSession(gameSession: GameSession): Promise<any> {
     const response = await this.setData(
-      `gameSession:${gameSession.id}`,
-      JSON.stringify(gameSessionStringifiable)
+      `GameSession:${gameSession.id}`,
+      JSON.stringify(gameSession)
     )
 
-    this.client.expire(`gameSession:${gameSession.id}`, 12000)
+    this.client.expire(`GameSession:${gameSession.id}`, 12000)
     return response
   }
 
@@ -76,9 +132,9 @@ class RedisService {
    * @param gameSessionId The identification of a game session to retrieve.
    * @returns The game session object with data and methods.
    */
-  async getGameSessionObject(gameSessionId: string): Promise<GameSession | undefined> {
+  async getGameSession(gameSessionId: string): Promise<GameSession | undefined> {
     try {
-      const gameSession: string = await this.getData(`gameSession:${gameSessionId}`)
+      const gameSession: string = await this.getData(`GameSession:${gameSessionId}`)
       if (gameSession) {
         const gameSessionParsed: GameSession = JSON.parse(gameSession)
         return new GameSession(
@@ -87,17 +143,23 @@ class RedisService {
           gameSessionParsed.player1,
           gameSessionParsed.player2,
           gameSessionParsed.currentPlayer,
-          gameSessionParsed.playerAI,
           gameSessionParsed.winner,
-          new Map(gameSessionParsed.ready),
           gameSessionParsed.isGameStarted
         )
       }
       return undefined
     } catch (error) {
-      console.error('Error getting player data:', error)
+      console.error('Error getting game session data:', error)
       return undefined
     }
+  }
+
+  /**
+   * Request to delete game session data.
+   * @param gameSessionId The identification of a game session
+   */
+  async deleteGameSession(gameSessionId: string) {
+    this.client.del(`GameSession:${gameSessionId}`)
   }
 
   /**

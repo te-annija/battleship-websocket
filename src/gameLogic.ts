@@ -10,32 +10,27 @@ import GameSession from './models/GameSession.js'
 import Ship from './models/Ship.js'
 import gameService from './services/BackendService.js'
 import * as webScoketHelpers from './helpers/WebSocketHelpers.js'
-import GameboardCell from 'models/GameboardCell.js'
+import GameboardCell from './models/GameboardCell.js'
 import { GameSessionType } from 'enums/GameSessionType.js'
-import PlayerAI from 'models/PlayerAI.js'
+import PlayerComputer from './models/PlayerComputer.js'
+import Gameboard from './models/Gameboard.js'
+import redisService from './services/RedisService.js'
+
 /**
  * Handle place one ship on board and update the player.
- *
  * @param ws Current connection websocket.
  * @param player Current data about player.
- * @param gameSession The current gameSession where player is connected.
  * @param data The data about the ship that needs to be placed.
  */
-export function handlePlaceShip(
-  ws: WebSocket,
-  player: Player,
-  data: any,
-  gameSession?: GameSession
-): void {
-  if (gameSession && gameSession.isGameStarted) {
-    throw new Error('Cannot place ship! Game already started.')
-  }
+export async function handlePlaceShip(ws: WebSocket, player: Player, data: any): Promise<void> {
+  const gameboard: Gameboard = await redisService.getGameboard(player.id)
 
-  if (data && data.ship_id && data.position) {
-    const ship: Ship | undefined = player.gameboard.getShipById(data.ship_id)
+  if (data && data.shipId && data.position) {
+    const ship: Ship | undefined = gameboard.getShipById(data.shipId)
     if (ship) {
-      player.gameboard.placeShip(ship, data.position)
-      webScoketHelpers.sendPlayerData(ws, player)
+      gameboard.placeShip(ship, data.position)
+      webScoketHelpers.sendGameboardData(ws, gameboard)
+      await redisService.setGameboard(player.id, gameboard)
       return
     }
   }
@@ -45,48 +40,33 @@ export function handlePlaceShip(
 
 /**
  * Hanlde place ships randomly on board and update the player.
- *
  * @param ws Current connection websocket.
  * @param player Current data about player.
- * @param gameSession The current gameSession where player is connected.
  */
-export function handleRandomizeShips(
-  ws: WebSocket,
-  player: Player,
-  gameSession?: GameSession
-): void {
-  if (gameSession && gameSession.isGameStarted) {
-    throw new Error('Cannot randomize ships! Game already started')
-  }
+export async function handleRandomizeShips(ws: WebSocket, player: Player): Promise<void> {
+  const gameboard: Gameboard = await redisService.getGameboard(player.id)
 
-  player.gameboard.placeShipsRandomly()
-  webScoketHelpers.sendPlayerData(ws, player)
+  gameboard.placeShipsRandomly()
+  webScoketHelpers.sendGameboardData(ws, gameboard)
+  await redisService.setGameboard(player.id, gameboard)
 }
 
 /**
  * Handle remove one ship on board and update the player.
- *
  * @param ws Current connection websocket.
  * @param player Current data about player.
  * @param data The data about the ship that needs to be removed.
- * @param gameSession The current gameSession where player is connected.
  */
-export function handleRemoveShip(
-  ws: WebSocket,
-  player: Player,
-  data: any,
-  gameSession?: GameSession
-): void {
-  if (gameSession && gameSession.isGameStarted) {
-    throw new Error('Cannot remove ship! Game already started.')
-  }
+export async function handleRemoveShip(ws: WebSocket, player: Player, data: any): Promise<void> {
+  const gameboard: Gameboard = await redisService.getGameboard(player.id)
 
-  if (data && data.ship_id) {
-    const ship: Ship | undefined = player.gameboard.getShipById(data.ship_id)
+  if (data && data.shipId) {
+    const ship: Ship | undefined = gameboard.getShipById(data.shipId)
     if (ship) {
-      player.gameboard.cleanBoardOnShip(ship)
+      gameboard.cleanBoardOnShip(ship)
       ship.cleanData()
-      webScoketHelpers.sendPlayerData(ws, player)
+      webScoketHelpers.sendGameboardData(ws, gameboard)
+      await redisService.setGameboard(player.id, gameboard)
       return
     }
   }
@@ -96,23 +76,17 @@ export function handleRemoveShip(
 
 /**
  * Handle remove all ships from board and update the player.
- *
  * @param ws Current connection websocket.
  * @param player Current data about player.
- * @param gameSession The current gameSession where player is connected.
  */
-export function handleResetShips(ws: WebSocket, player: Player, gameSession?: GameSession): void {
-  if (gameSession && gameSession.isGameStarted) {
-    throw new Error('Cannot reset ship! Game already started')
-  }
-
-  player.gameboard.cleanBoard()
-  webScoketHelpers.sendPlayerData(ws, player)
+export async function handleResetShips(ws: WebSocket, player: Player): Promise<void> {
+  const gameboard: Gameboard = new Gameboard()
+  webScoketHelpers.sendGameboardData(ws, gameboard)
+  await redisService.setGameboard(player.id, gameboard)
 }
 
 /**
  * Handle attack single cell on the enemy gameboard and notify players.
- *
  * @param ws Current connection websocket.
  * @param player Current data about player.
  * @param data The data indicating attack coordinates.
@@ -128,14 +102,13 @@ export async function handleAttackCell(
   opponent?: Player,
   opponentWs?: WebSocket
 ): Promise<void> {
-  // Check if player can attack opponent.
   if (!gameSession) {
     throw new Error('Game is not created. Please create a new game.')
   }
 
   if (!opponent) {
-    player.gameboard.cleanBoard()
-    player.attackGameboard.cleanBoard()
+    await redisService.setGameboard(player.id, new Gameboard())
+    await redisService.setGameboard(player.id, new Gameboard(), 'attack')
     webScoketHelpers.sendAction(ws, 'opponent-disconnected')
     return
   }
@@ -152,7 +125,7 @@ export async function handleAttackCell(
     throw new Error('Cannot make an attack. The game has already ended.')
   }
 
-  if (processAttack(gameSession, player, opponent, data, ws, opponentWs)) {
+  if (await processAttack(gameSession, player, opponent, data, ws, opponentWs)) {
     await handleEndOfGame(ws, player, gameSession, opponent, opponentWs)
   }
 }
@@ -162,59 +135,70 @@ export async function handleAttackCell(
  * @param ws Current connection websocket.
  * @param player Current data about player.
  * @param gameSession The current gameSession where player is connected.
- * @param opponent Current data about the opponent.
+ * @param attacker Current data about the attacker - computer.
  */
 export async function handleAiAttack(
   ws: WebSocket,
   player: Player,
   gameSession: GameSession,
-  opponent: PlayerAI
+  attacker: PlayerComputer
 ) {
-  const target = opponent.getAttackPosition()
-  if (processAttack(gameSession, opponent, player, target, undefined, ws)) {
-    await handleEndOfGame(ws, player, gameSession, opponent, undefined)
+  const attackGameboard: Gameboard = await redisService.getGameboard(attacker.id, 'attack')
+  const target = attacker.getAttackPosition(attackGameboard)
+  if (await processAttack(gameSession, attacker, player, target, undefined, ws)) {
+    await handleEndOfGame(ws, player, gameSession, attacker)
   }
+  redisService.setPlayer(attacker)
 }
 
 /**
  * Process attack to the gameboard and notify the results.
- * @param gameSession The current gameSession where player is connected.
- * @param player Current data about player.
+ * @param gameSession The current game session where player is connected.
+ * @param attacker Current data about player that is attacking.
  * @param opponent Current data about the opponent.
  * @param data The data indicating attack coordinates.
  * @param ws Current connection websocket.
  * @param opponentWs Current connection to opponent websocket.
  * @returns True if attack has been resulted to endgame, false otherwise.
  */
-function processAttack(
+async function processAttack(
   gameSession: GameSession,
-  player: Player,
+  attacker: Player | PlayerComputer,
   opponent: Player,
   data: any,
   ws?: WebSocket,
   opponentWs?: WebSocket
-): boolean {
-  // Process attack.
-  const attackedCell: GameboardCell = opponent.recieveAttack(data.row, data.col)
-  player.saveAttackResult(data.row, data.col, attackedCell)
+): Promise<boolean> {
+  const opponentGameboard: Gameboard = await redisService.getGameboard(opponent.id)
+  const attackGameboard: Gameboard = await redisService.getGameboard(attacker.id, 'attack')
 
-  if (gameSession.playerAI && gameSession.currentPlayer === gameSession.playerAI.id) {
-    gameSession.playerAI.processAfterAttack(data.row, data.col, attackedCell)
+  // Process attack.
+  const attackedCell: GameboardCell = opponentGameboard.recieveAttack(data.row, data.col)
+  attackGameboard.saveAttackResult(data.row, data.col, attackedCell)
+
+  if (attacker instanceof PlayerComputer) {
+    attacker.processAfterAttack(data.row, data.col, attackGameboard.size, attackedCell)
   }
+
+  attackGameboard.lastAttack = data
+  opponentGameboard.lastAttack = data
 
   // Notify players about the results.
   if (ws) {
-    webScoketHelpers.sendPlayerData(ws, player)
+    webScoketHelpers.sendGameboardData(ws, attackGameboard, 'attack')
   }
 
   if (opponentWs) {
-    webScoketHelpers.sendPlayerData(opponentWs, opponent)
+    webScoketHelpers.sendGameboardData(opponentWs, opponentGameboard)
   }
+
+  await redisService.setGameboard(attacker.id, attackGameboard, 'attack')
+  await redisService.setGameboard(opponent.id, opponentGameboard)
 
   // Check if game can be ended.
   if (attackedCell.ship) {
-    if (opponent.gameboard.allShipsSunk()) {
-      gameSession.winner = player.id
+    if (opponentGameboard.allShipsSunk()) {
+      gameSession.winner = attacker.id
       return true
     }
   } else {
@@ -224,13 +208,13 @@ function processAttack(
   // Notify users about turns.
   if (ws) {
     webScoketHelpers.sendAction(ws, 'game-turn', {
-      isPlayerTurn: gameSession.currentPlayer === player.id
+      isPlayerTurn: gameSession.currentPlayer === attacker.id
     })
   }
 
   if (opponentWs) {
     webScoketHelpers.sendAction(opponentWs, 'game-turn', {
-      isPlayerTurn: gameSession.currentPlayer !== player.id
+      isPlayerTurn: gameSession.currentPlayer !== attacker.id
     })
   }
 
@@ -243,6 +227,8 @@ function processAttack(
  * @param player Current data about player.
  * @param gameSession The current gameSession where player is connected.
  * @param opponent Current data about the opponent.
+ * @param opponentWs Current connection to opponent websocket.
+ * @param sendGameEnded True if update needs to be send to a player, false otherwise.
  * @returns True if game has ended, false otherwise.
  */
 export async function handleEndOfGame(
@@ -283,27 +269,34 @@ export async function handleEndOfGame(
   // Clean both player gameboards to be reusable.
   gameSession.resetGame()
 
-  player.gameboard.cleanBoard()
-  player.attackGameboard.cleanBoard()
+  await redisService.setGameboard(player.id, new Gameboard())
+  await redisService.setGameboard(player.id, new Gameboard(), 'attack')
+  player.isReady = false
 
   if (opponent) {
-    opponent.gameboard.cleanBoard()
-    opponent.attackGameboard.cleanBoard()
+    await redisService.setGameboard(opponent.id, new Gameboard())
+    await redisService.setGameboard(opponent.id, new Gameboard(), 'attack')
+    player.isReady = false
   }
   return true
 }
 
 /**
- *
- * @param player
- * @param gameSession
- * @param opponent
+ * Save ended game data to the database.
+ * @param gameSession The current gameSession where player is connected.
+ * @param winner Current data about the winner player.
+ * @param opponent Current data about the loser player.
+ * @returns Data sent to the server.
  */
-async function handleSaveGame(gameSession: GameSession, winner?: Player, opponent?: Player) {
+async function handleSaveGame(
+  gameSession: GameSession,
+  winner?: Player,
+  opponent?: Player
+): Promise<any> {
   const points =
-    gameSession.type === GameSessionType.Random
+    gameSession.type === GameSessionType.Online
       ? winner && winner.difficulty && opponent && opponent.difficulty
-        ? 15 - (winner.difficulty - opponent.difficulty)
+        ? 15 - 2 * (winner.difficulty - opponent.difficulty)
         : 15
       : 0
 
@@ -314,15 +307,15 @@ async function handleSaveGame(gameSession: GameSession, winner?: Player, opponen
     player1: {
       userId: winner ? winner.id : '',
       difficulty: winner ? winner.difficulty : '',
-      gameboard: winner ? winner.gameboard : '',
-      attackGameboard: winner ? winner.attackGameboard : '',
-      points: winner ? points : ''
+      gameboard: winner ? await redisService.getGameboard(winner.id) : '',
+      attackGameboard: winner ? await redisService.getGameboard(winner.id, 'attack') : '',
+      points: winner ? Math.ceil(points * 1.2) : ''
     },
     player2: {
       userId: opponent ? opponent.id : '',
       difficulty: opponent ? opponent.difficulty : '',
-      gameboard: opponent ? opponent.gameboard : '',
-      attackGameboard: opponent ? opponent.attackGameboard : '',
+      gameboard: opponent ? await redisService.getGameboard(opponent.id) : '',
+      attackGameboard: opponent ? await redisService.getGameboard(opponent.id, 'attack') : '',
       points: opponent ? -1 * points : ''
     }
   }

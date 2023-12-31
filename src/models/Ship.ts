@@ -63,14 +63,6 @@ export default class Ship {
   }
 
   /**
-   * Checks if the ship is on the game board, indicating it has been placed during setup.
-   * @returns True if the ship is on the board, false otherwise.
-   */
-  isShipOnBoard(): boolean {
-    return this.isOnBoard
-  }
-
-  /**
    * Registers a hit on the ship.
    */
   hit(): void {

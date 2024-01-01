@@ -1,9 +1,4 @@
 {
-  "server": {
-    "host": "localhost",
-    "port": 8080
-  },
-  "api": "",
   "battleships": [
     { "name": "carrier", "size": 5, "count": 0 },
     { "name": "battleship", "size": 4, "count": 1 },

@@ -7,12 +7,17 @@ import Gameboard from '../models/Gameboard.js'
 import GameSession from '../models/GameSession.js'
 import Player from '../models/Player.js'
 import Redis from 'ioredis'
+import 'dotenv/config'
 
 class RedisService {
   private client: Redis
 
   constructor() {
-    this.client = new Redis()
+    this.client = new Redis({
+      password: process.env.REDIS_PASSWORD,
+      host: process.env.REDIS_HOST,
+      port: Number(process.env.REDIS_PORT) || 6379
+    })
     this.client.on('error', (err: any) => console.log('Redis Client Error', err))
   }
 

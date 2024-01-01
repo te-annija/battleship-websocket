@@ -5,7 +5,6 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws'
-import config from 'config'
 import { IncomingMessage } from 'http'
 import GameSession from './models/GameSession.js'
 import Player from './models/Player.js'
@@ -16,9 +15,10 @@ import { GameSessionType } from 'enums/GameSessionType.js'
 import backendService from './services/BackendService.js'
 import * as webScoketHelpers from './helpers/WebSocketHelpers.js'
 import PlayerComputer from './models/PlayerComputer.js'
+import 'dotenv/config'
 
 const TIMER_DURATION_SECONDS = 90 // Timer for max allowed turn time in the game.
-const SERVER_PORT: number = config.has('server.ports') ? config.get('server.ports') : 8080 // Server active port
+const SERVER_PORT: number = Number(process.env.PORT) || 3000
 
 const wss: WebSocketServer = new WebSocketServer({ port: SERVER_PORT }) //WebSocket Server setup
 

@@ -5,7 +5,6 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws'
-import { IncomingMessage } from 'http'
 import GameSession from './models/GameSession.js'
 import Player from './models/Player.js'
 import * as gameLogic from './gameLogic.js'
@@ -29,60 +28,70 @@ const availiableSessions: string[] = [] // Stores all game sessions that are wai
 /**
  * Websocket server connection
  */
-wss.on('connection', async (ws: WebSocket, request: IncomingMessage) => {
+wss.on('connection', async (ws: WebSocket) => {
   console.log('A player connected')
 
-  // Handle Player initial data
-  const cookieUid = getKeyFromCookies(request.headers.cookie ?? '', 'uid')
-  const userToken = getKeyFromCookies(request.headers.cookie ?? '', 'token')
-
-  const user = await backendService.getUserData(userToken)
-
-  const playerId: string = user
-    ? user.username
-    : cookieUid !== ''
-    ? cookieUid
-    : await generateRandomString('player')
-
-  let player: Player | undefined = await redisService.getPlayer(playerId)
-  connections.set(playerId, ws)
-
-  if (!player) {
-    // New user session.
-    const playerUsername: string = user ? user.username : `player-${playerId}`
-    player = new Player(playerId, playerUsername)
-    if (user) {
-      player.difficulty = user.rank.difficulty
-    }
-    await redisService.setPlayer(player)
-  }
-
-  const gameSession: GameSession | undefined = player.gameSessionId
-    ? await redisService.getGameSession(player.gameSessionId)
-    : undefined
-
-  const opponent: Player | undefined = await getOpponentData(player.id, gameSession)
-
-  await gameSessionLogic.handlePlayerSessionStart(ws, player, gameSession, opponent)
-
-  if (gameSession && timers.has(gameSession.id)) {
-    webScoketHelpers.sendAction(ws, 'timer', {
-      timer: timers.get(gameSession.id).remainingTime
-    })
-  }
+  let player: Player | undefined
 
   // Handle WebSocket messages
   ws.on('message', async (data: string) => {
     console.log('received: %s', data)
-    player = await redisService.getPlayer(playerId)
-
-    if (!player) {
-      ws.close()
-      return
-    }
 
     try {
       const message: any = JSON.parse(data)
+
+      if (!player) {
+        if (message.type === 'init-player') {
+          // Handle Player initial data
+          const user: any = await backendService.getUserData(message.data.token)
+
+          const playerId: string = user
+            ? user.username
+            : message.data.id
+            ? message.data.id
+            : await generateRandomString('player')
+
+          player = await redisService.getPlayer(playerId)
+          connections.set(playerId, ws)
+
+          if (!player) {
+            // New user session.
+            const playerUsername: string = user ? user.username : `player-${playerId}`
+            player = new Player(playerId, playerUsername)
+            if (user) {
+              player.difficulty = user.rank.difficulty
+            }
+            await redisService.setPlayer(player)
+          }
+
+          // Join user game session if exists.
+          const gameSession: GameSession | undefined = player.gameSessionId
+            ? await redisService.getGameSession(player.gameSessionId)
+            : undefined
+
+          const opponent: Player | undefined = await getOpponentData(player.id, gameSession)
+
+          await gameSessionLogic.handlePlayerSessionStart(ws, player, gameSession, opponent)
+
+          if (gameSession && timers.has(gameSession.id)) {
+            webScoketHelpers.sendAction(ws, 'timer', {
+              timer: timers.get(gameSession.id).remainingTime
+            })
+          }
+        } else {
+          ws.close()
+        }
+
+        return
+      }
+
+      // Fetch new player data if changed in opponent WebSocket session
+      player = await redisService.getPlayer(player.id)
+
+      if (!player) {
+        ws.close()
+        return
+      }
 
       let gameSession: GameSession | undefined = player.gameSessionId
         ? await redisService.getGameSession(player.gameSessionId)
@@ -159,7 +168,7 @@ wss.on('connection', async (ws: WebSocket, request: IncomingMessage) => {
         }
         case 'join-game-online': {
           disallowIfShipsNotPlaced(player)
-          const user: any = await backendService.getUserData(userToken)
+          const user: any = await backendService.getUserData(message.data.token)
           if (user) {
             player.difficulty = user.rank.difficulty
           }
@@ -359,25 +368,6 @@ wss.on('connection', async (ws: WebSocket, request: IncomingMessage) => {
     }
   })
 })
-
-/**
- * Get key from the cookie.
- * @param cookies Cookies from the request header data.
- * @returns Returns value of the key.
- */
-function getKeyFromCookies(cookies: string, key: string): string {
-  const cookieName = `${key}=`
-  try {
-    for (const cookie of cookies.split('; ')) {
-      if (cookie.indexOf(cookieName) == 0) {
-        return cookie.substring(cookieName.length, cookie.length)
-      }
-    }
-  } catch (error) {
-    console.log(error)
-  }
-  return ''
-}
 
 /**
  * Get current opponent data from the game session.

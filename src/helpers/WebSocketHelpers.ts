@@ -43,7 +43,7 @@ export function sendOpponentData(ws: WebSocket, opponent: Player): void {
     JSON.stringify({
       type: 'opponent',
       data: {
-        id: opponent.id,
+        playerId: opponent.playerId,
         username: opponent.username,
         isReady: opponent.isReady
       }

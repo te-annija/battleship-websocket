@@ -8,7 +8,7 @@
  */
 export default class Player {
   /** The unique identifier for the player. */
-  id: string
+  playerId: string
 
   /** The public name of the player. */
   username: string
@@ -23,13 +23,13 @@ export default class Player {
   isReady: boolean
 
   constructor(
-    id: string,
+    playerId: string,
     username: string,
     isReady: boolean = false,
     gameSessionId?: string,
     difficulty?: number
   ) {
-    this.id = id
+    this.playerId = playerId
     this.username = username
     this.isReady = isReady
     this.difficulty = difficulty

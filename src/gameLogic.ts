@@ -23,14 +23,14 @@ import redisService from './services/RedisService.js'
  * @param data The data about the ship that needs to be placed.
  */
 export async function handlePlaceShip(ws: WebSocket, player: Player, data: any): Promise<void> {
-  const gameboard: Gameboard = await redisService.getGameboard(player.id)
+  const gameboard: Gameboard = await redisService.getGameboard(player.playerId)
 
   if (data && data.shipId && data.position) {
     const ship: Ship | undefined = gameboard.getShipById(data.shipId)
     if (ship) {
       gameboard.placeShip(ship, data.position)
       webScoketHelpers.sendGameboardData(ws, gameboard)
-      await redisService.setGameboard(player.id, gameboard)
+      await redisService.setGameboard(player.playerId, gameboard)
       return
     }
   }
@@ -44,11 +44,11 @@ export async function handlePlaceShip(ws: WebSocket, player: Player, data: any):
  * @param player Current data about player.
  */
 export async function handleRandomizeShips(ws: WebSocket, player: Player): Promise<void> {
-  const gameboard: Gameboard = await redisService.getGameboard(player.id)
+  const gameboard: Gameboard = await redisService.getGameboard(player.playerId)
 
   gameboard.placeShipsRandomly()
   webScoketHelpers.sendGameboardData(ws, gameboard)
-  await redisService.setGameboard(player.id, gameboard)
+  await redisService.setGameboard(player.playerId, gameboard)
 }
 
 /**
@@ -58,7 +58,7 @@ export async function handleRandomizeShips(ws: WebSocket, player: Player): Promi
  * @param data The data about the ship that needs to be removed.
  */
 export async function handleRemoveShip(ws: WebSocket, player: Player, data: any): Promise<void> {
-  const gameboard: Gameboard = await redisService.getGameboard(player.id)
+  const gameboard: Gameboard = await redisService.getGameboard(player.playerId)
 
   if (data && data.shipId) {
     const ship: Ship | undefined = gameboard.getShipById(data.shipId)
@@ -66,7 +66,7 @@ export async function handleRemoveShip(ws: WebSocket, player: Player, data: any)
       gameboard.cleanBoardOnShip(ship)
       ship.cleanData()
       webScoketHelpers.sendGameboardData(ws, gameboard)
-      await redisService.setGameboard(player.id, gameboard)
+      await redisService.setGameboard(player.playerId, gameboard)
       return
     }
   }
@@ -82,7 +82,7 @@ export async function handleRemoveShip(ws: WebSocket, player: Player, data: any)
 export async function handleResetShips(ws: WebSocket, player: Player): Promise<void> {
   const gameboard: Gameboard = new Gameboard()
   webScoketHelpers.sendGameboardData(ws, gameboard)
-  await redisService.setGameboard(player.id, gameboard)
+  await redisService.setGameboard(player.playerId, gameboard)
 }
 
 /**
@@ -93,6 +93,7 @@ export async function handleResetShips(ws: WebSocket, player: Player): Promise<v
  * @param gameSession The current gameSession where player is connected.
  * @param opponent Current data about the opponent.
  * @param opponentWs Current connection to opponent websocket.
+ * @returns True if game is ended, false - otherwise.
  */
 export async function handleAttackCell(
   ws: WebSocket,
@@ -101,19 +102,19 @@ export async function handleAttackCell(
   gameSession?: GameSession,
   opponent?: Player,
   opponentWs?: WebSocket
-): Promise<void> {
+): Promise<boolean> {
   if (!gameSession) {
     throw new Error('Game is not created. Please create a new game.')
   }
 
   if (!opponent) {
-    await redisService.setGameboard(player.id, new Gameboard())
-    await redisService.setGameboard(player.id, new Gameboard(), 'attack')
+    await redisService.setGameboard(player.playerId, new Gameboard())
+    await redisService.setGameboard(player.playerId, new Gameboard(), 'attack')
     webScoketHelpers.sendAction(ws, 'opponent-disconnected')
-    return
+    return false
   }
 
-  if (gameSession.currentPlayer !== player.id) {
+  if (gameSession.currentPlayer !== player.playerId) {
     throw new Error('This is not your turn. Please wait!')
   }
 
@@ -126,8 +127,9 @@ export async function handleAttackCell(
   }
 
   if (await processAttack(gameSession, player, opponent, data, ws, opponentWs)) {
-    await handleEndOfGame(ws, player, gameSession, opponent, opponentWs)
+    return await handleEndOfGame(ws, player, gameSession, opponent, opponentWs)
   }
+  return false
 }
 
 /**
@@ -143,7 +145,7 @@ export async function handleAiAttack(
   gameSession: GameSession,
   attacker: PlayerComputer
 ) {
-  const attackGameboard: Gameboard = await redisService.getGameboard(attacker.id, 'attack')
+  const attackGameboard: Gameboard = await redisService.getGameboard(attacker.playerId, 'attack')
   const target = attacker.getAttackPosition(attackGameboard)
   if (await processAttack(gameSession, attacker, player, target, undefined, ws)) {
     await handleEndOfGame(ws, player, gameSession, attacker)
@@ -164,13 +166,13 @@ export async function handleAiAttack(
 async function processAttack(
   gameSession: GameSession,
   attacker: Player | PlayerComputer,
-  opponent: Player,
+  opponent: Player | PlayerComputer,
   data: any,
   ws?: WebSocket,
   opponentWs?: WebSocket
 ): Promise<boolean> {
-  const opponentGameboard: Gameboard = await redisService.getGameboard(opponent.id)
-  const attackGameboard: Gameboard = await redisService.getGameboard(attacker.id, 'attack')
+  const opponentGameboard: Gameboard = await redisService.getGameboard(opponent.playerId)
+  const attackGameboard: Gameboard = await redisService.getGameboard(attacker.playerId, 'attack')
 
   // Process attack.
   const attackedCell: GameboardCell = opponentGameboard.recieveAttack(data.row, data.col)
@@ -192,13 +194,13 @@ async function processAttack(
     webScoketHelpers.sendGameboardData(opponentWs, opponentGameboard)
   }
 
-  await redisService.setGameboard(attacker.id, attackGameboard, 'attack')
-  await redisService.setGameboard(opponent.id, opponentGameboard)
+  await redisService.setGameboard(attacker.playerId, attackGameboard, 'attack')
+  await redisService.setGameboard(opponent.playerId, opponentGameboard)
 
   // Check if game can be ended.
   if (attackedCell.ship) {
     if (opponentGameboard.allShipsSunk()) {
-      gameSession.winner = attacker.id
+      gameSession.winner = attacker.playerId
       return true
     }
   } else {
@@ -208,13 +210,13 @@ async function processAttack(
   // Notify users about turns.
   if (ws) {
     webScoketHelpers.sendAction(ws, 'game-turn', {
-      isPlayerTurn: gameSession.currentPlayer === attacker.id
+      isPlayerTurn: gameSession.currentPlayer === attacker.playerId
     })
   }
 
   if (opponentWs) {
     webScoketHelpers.sendAction(opponentWs, 'game-turn', {
-      isPlayerTurn: gameSession.currentPlayer !== attacker.id
+      isPlayerTurn: gameSession.currentPlayer !== attacker.playerId
     })
   }
 
@@ -243,8 +245,7 @@ export async function handleEndOfGame(
     return false
   }
 
-  const isPlayerWinner = player.id === gameSession.winner
-
+  const isPlayerWinner = player.playerId === gameSession.winner
   const gameData = await handleSaveGame(
     gameSession,
     isPlayerWinner ? player : opponent,
@@ -269,13 +270,13 @@ export async function handleEndOfGame(
   // Clean both player gameboards to be reusable.
   gameSession.resetGame()
 
-  await redisService.setGameboard(player.id, new Gameboard())
-  await redisService.setGameboard(player.id, new Gameboard(), 'attack')
+  await redisService.setGameboard(player.playerId, new Gameboard())
+  await redisService.setGameboard(player.playerId, new Gameboard(), 'attack')
   player.isReady = false
 
   if (opponent) {
-    await redisService.setGameboard(opponent.id, new Gameboard())
-    await redisService.setGameboard(opponent.id, new Gameboard(), 'attack')
+    await redisService.setGameboard(opponent.playerId, new Gameboard())
+    await redisService.setGameboard(opponent.playerId, new Gameboard(), 'attack')
     player.isReady = false
   }
   return true
@@ -305,17 +306,15 @@ async function handleSaveGame(
     winnerId: gameSession.winner,
     gameType: gameSession.type,
     player1: {
-      userId: winner ? winner.id : '',
-      difficulty: winner ? winner.difficulty : '',
-      gameboard: winner ? await redisService.getGameboard(winner.id) : '',
-      attackGameboard: winner ? await redisService.getGameboard(winner.id, 'attack') : '',
+      playerId: winner ? winner.playerId : '',
+      gameboard: winner ? await redisService.getGameboard(winner.playerId) : '',
+      attackGameboard: winner ? await redisService.getGameboard(winner.playerId, 'attack') : '',
       points: winner ? Math.ceil(points * 1.2) : ''
     },
     player2: {
-      userId: opponent ? opponent.id : '',
-      difficulty: opponent ? opponent.difficulty : '',
-      gameboard: opponent ? await redisService.getGameboard(opponent.id) : '',
-      attackGameboard: opponent ? await redisService.getGameboard(opponent.id, 'attack') : '',
+      playerId: opponent ? opponent.playerId : '',
+      gameboard: opponent ? await redisService.getGameboard(opponent.playerId) : '',
+      attackGameboard: opponent ? await redisService.getGameboard(opponent.playerId, 'attack') : '',
       points: opponent ? -1 * points : ''
     }
   }

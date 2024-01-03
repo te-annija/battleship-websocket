@@ -54,7 +54,7 @@ class RedisService {
         return new Gameboard(size, grid, ships)
       }
       throw new Error('Something went wrong, please reload the page!')
-    } catch (error) {
+    } catch (error: any) {
       throw new Error('Something went wrong, please reload the page!')
     }
   }
@@ -65,8 +65,8 @@ class RedisService {
    * @returns The response if saving was successful.
    */
   async setPlayer(player: Player | PlayerComputer): Promise<any> {
-    const respone = this.setData(`Player:${player.id}`, JSON.stringify(player))
-    this.client.expire(`Player:${player.id}`, 12000)
+    const respone = this.setData(`Player:${player.playerId}`, JSON.stringify(player))
+    this.client.expire(`Player:${player.playerId}`, 12000)
     return respone
   }
 
@@ -97,8 +97,8 @@ class RedisService {
     try {
       const playerData: string = await this.getData(`Player:${playerId}`)
       if (playerData) {
-        const { id, targets } = JSON.parse(playerData)
-        return new PlayerComputer(id, targets)
+        const { playerId, targets } = JSON.parse(playerData)
+        return new PlayerComputer(playerId, targets)
       }
       return undefined
     } catch (error) {
@@ -124,11 +124,11 @@ class RedisService {
    */
   async setGameSession(gameSession: GameSession): Promise<any> {
     const response = await this.setData(
-      `GameSession:${gameSession.id}`,
+      `GameSession:${gameSession.gameSessionId}`,
       JSON.stringify(gameSession)
     )
 
-    this.client.expire(`GameSession:${gameSession.id}`, 12000)
+    this.client.expire(`GameSession:${gameSession.gameSessionId}`, 12000)
     return response
   }
 
@@ -143,7 +143,7 @@ class RedisService {
       if (gameSession) {
         const gameSessionParsed: GameSession = JSON.parse(gameSession)
         return new GameSession(
-          gameSessionParsed.id,
+          gameSessionParsed.gameSessionId,
           gameSessionParsed.type,
           gameSessionParsed.player1,
           gameSessionParsed.player2,

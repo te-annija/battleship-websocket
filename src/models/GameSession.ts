@@ -10,7 +10,7 @@ import { GameSessionType } from 'enums/GameSessionType.js'
  */
 export default class GameSession {
   /** The game session unique identifier. */
-  id: string
+  gameSessionId: string
 
   /** The first player of the game. */
   player1?: string
@@ -31,7 +31,7 @@ export default class GameSession {
   type: GameSessionType
 
   constructor(
-    id: string,
+    gameSessionId: string,
     type: GameSessionType = GameSessionType.Online,
     player1?: string,
     player2?: string,
@@ -39,7 +39,7 @@ export default class GameSession {
     winner?: string,
     isGameStarted: boolean = false
   ) {
-    this.id = id
+    this.gameSessionId = gameSessionId
     this.type = type
     this.player1 = player1
     this.player2 = player2

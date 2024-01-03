@@ -15,8 +15,8 @@ export default class PlayerComputer extends Player {
   /** The row and column index pairs to target if a ship is hit and need to be tageted further. */
   targets: { row: number; col: number }[]
 
-  constructor(id: string, targets: { row: number; col: number }[] = []) {
-    super(id, 'Friendly Computer', true)
+  constructor(playerId: string, targets: { row: number; col: number }[] = []) {
+    super(playerId, 'Friendly Computer', true)
     this.targets = targets
   }
 

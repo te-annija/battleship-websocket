@@ -42,7 +42,7 @@ export default class Gameboard {
       for (const ship of ships) {
         this.ships.push(
           new Ship(
-            ship.id,
+            ship.shipId,
             ship.name,
             ship.size,
             ship.hits,
@@ -68,11 +68,11 @@ export default class Gameboard {
       for (let j = 0; j < this.size; j++) {
         if (grid && grid[i][j]) {
           const shipData: Ship | undefined = grid[i][j].ship
-          const ship: Ship | undefined = shipData ? this.getShipById(shipData.id) : undefined
+          const ship: Ship | undefined = shipData ? this.getShipById(shipData.shipId) : undefined
 
           this.grid[i].push(
             new GameboardCell(
-              grid[i][j].id,
+              grid[i][j].gameboardCellId,
               grid[i][j].state,
               grid[i][j].adjacentCount,
               ship,
@@ -253,7 +253,7 @@ export default class Gameboard {
    * @returns The ship if ID exists or undefiend otherwise.
    */
   getShipById(shipId: string): Ship | undefined {
-    return this.ships.find((ship) => ship.id === shipId)
+    return this.ships.find((ship) => ship.shipId === shipId)
   }
 
   /**
@@ -273,7 +273,7 @@ export default class Gameboard {
 
       if (enemyCell.ship.isSunk()) {
         this.setAdjacentCellsAsMissed(enemyCell.ship)
-        const ship: Ship | undefined = this.getShipById(enemyCell.ship.id)
+        const ship: Ship | undefined = this.getShipById(enemyCell.ship.shipId)
         if (ship) {
           ship.position = enemyCell.ship.position
           ship.hits = enemyCell.ship.hits

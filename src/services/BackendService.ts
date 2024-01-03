@@ -27,7 +27,7 @@ export class BackendService {
             resolve(null)
           } else {
             try {
-              const response = await axios.get(`${API_URL}/user/${decoded.user.id}`)
+              const response = await axios.get(`${API_URL}/user/${decoded.user.userId}`)
               resolve(response.data.user)
             } catch (error) {
               resolve(null)

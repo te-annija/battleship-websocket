@@ -28,14 +28,14 @@ export async function handlePlayerSessionStart(
   opponent?: Player
 ) {
   try {
-    const gameboard: Gameboard = await redisService.getGameboard(player.id)
-    const attackGameboard: Gameboard = await redisService.getGameboard(player.id, 'attack')
+    const gameboard: Gameboard = await redisService.getGameboard(player.playerId)
+    const attackGameboard: Gameboard = await redisService.getGameboard(player.playerId, 'attack')
     webScoketHelpers.sendGameboardData(ws, gameboard)
     webScoketHelpers.sendGameboardData(ws, attackGameboard, 'attack')
   } catch (error: any) {
     const newGameboard = new Gameboard()
-    await redisService.setGameboard(player.id, newGameboard)
-    await redisService.setGameboard(player.id, newGameboard, 'attack')
+    await redisService.setGameboard(player.playerId, newGameboard)
+    await redisService.setGameboard(player.playerId, newGameboard, 'attack')
     webScoketHelpers.sendGameboardData(ws, newGameboard)
     webScoketHelpers.sendGameboardData(ws, newGameboard, 'attack')
   }
@@ -49,7 +49,7 @@ export async function handlePlayerSessionStart(
     if (gameSession.isGameStarted) {
       webScoketHelpers.sendAction(ws, 'game-started')
       webScoketHelpers.sendAction(ws, 'game-turn', {
-        isPlayerTurn: gameSession.currentPlayer === player.id
+        isPlayerTurn: gameSession.currentPlayer === player.playerId
       })
 
       if (!opponent) {
@@ -57,7 +57,14 @@ export async function handlePlayerSessionStart(
       }
     } else {
       try {
-        await handleJoinSession(ws, player, gameSession, opponent)
+        if (gameSession.type == GameSessionType.Friend && !opponent) {
+          webScoketHelpers.sendAction(ws, 'game-created', {
+            gameSessionId: gameSession.gameSessionId,
+            type: gameSession.type
+          })
+        } else {
+          await handleJoinSession(ws, player, gameSession, opponent)
+        }
       } catch (error: any) {
         player.gameSessionId = undefined
       }
@@ -80,7 +87,7 @@ export function handleJoinSession(
   opponent?: Player,
   opponentWs?: WebSocket
 ): void {
-  if (player.gameSessionId && gameSession.id !== player.gameSessionId) {
+  if (player.gameSessionId && gameSession.gameSessionId !== player.gameSessionId) {
     throw new Error('Failed to join the game session. Leave already started game first.')
   }
 
@@ -88,12 +95,12 @@ export function handleJoinSession(
     throw new Error('Failed to join the game session. Host disconnected.')
   }
 
-  player.gameSessionId = gameSession.id
+  player.gameSessionId = gameSession.gameSessionId
   webScoketHelpers.sendAction(ws, 'player-joined')
 
-  if (gameSession.player1 !== player.id) {
+  if (gameSession.player1 !== player.playerId) {
     // Player that is not the host is joining or rejoining the gameSession.
-    gameSession.player2 = player.id
+    gameSession.player2 = player.playerId
   }
 
   webScoketHelpers.sendPlayerData(ws, player)
@@ -121,10 +128,13 @@ export function handleCreateSession(
   data: any
 ): GameSession {
   const sessionType = data && data.type ? data.type : GameSessionType.Computer
-  const gameSession = new GameSession(gameSessionId, sessionType, player.id)
-  player.gameSessionId = gameSession.id
+  const gameSession = new GameSession(gameSessionId, sessionType, player.playerId)
+  player.gameSessionId = gameSession.gameSessionId
   player.isReady = false
-  webScoketHelpers.sendAction(ws, 'game-created', { id: gameSession.id, type: sessionType })
+  webScoketHelpers.sendAction(ws, 'game-created', {
+    gameSessionId: gameSession.gameSessionId,
+    type: sessionType
+  })
   if (sessionType !== GameSessionType.Computer) {
     webScoketHelpers.sendAction(ws, 'player-joined')
   }
@@ -140,7 +150,7 @@ export function handleCreateSession(
  * @returns Friend game session with given identifator.
  */
 export async function getFriendGameSession(player: Player, data: any): Promise<GameSession> {
-  const gameSession: GameSession | undefined = await redisService.getGameSession(data.id)
+  const gameSession: GameSession | undefined = await redisService.getGameSession(data.gameSessionId)
   if (!gameSession) {
     throw new Error(
       'The game session not found. Please recheck if the link is valid and friend is still in the game.'
@@ -149,8 +159,8 @@ export async function getFriendGameSession(player: Player, data: any): Promise<G
 
   if (
     gameSession.player2 &&
-    gameSession.player2 !== player.id &&
-    gameSession.player1 !== player.id
+    gameSession.player2 !== player.playerId &&
+    gameSession.player1 !== player.playerId
   ) {
     throw new Error('Failed to join the game session. The session is already full.')
   }
@@ -184,7 +194,7 @@ export async function getAvailiableGameSession(
       continue
     }
 
-    if (gameSession.player1 === player.id) {
+    if (gameSession.player1 === player.playerId) {
       continue
     }
     const opponent: Player | undefined = await redisService.getPlayer(gameSession.player1)
@@ -226,17 +236,17 @@ export function handleStartGame(
     gameSession.currentPlayer = Math.random() < 0.5 ? gameSession.player1 : gameSession.player2 //Choose player to start randomly
   }
   if (gameSession.type === GameSessionType.Computer) {
-    gameSession.currentPlayer = player.id
+    gameSession.currentPlayer = player.playerId
   }
 
   webScoketHelpers.sendAction(ws, 'game-turn', {
-    isPlayerTurn: gameSession.currentPlayer === player.id
+    isPlayerTurn: gameSession.currentPlayer === player.playerId
   })
   webScoketHelpers.sendAction(ws, 'game-started')
 
   if (opponentWs) {
     webScoketHelpers.sendAction(opponentWs, 'game-turn', {
-      isPlayerTurn: gameSession.currentPlayer !== player.id
+      isPlayerTurn: gameSession.currentPlayer !== player.playerId
     })
 
     webScoketHelpers.sendAction(opponentWs, 'game-started')
@@ -285,20 +295,20 @@ export async function handleLeaveGame(
 ): Promise<void> {
   if (gameSession) {
     if (gameSession.isGameStarted && opponent) {
-      gameSession.winner = opponent.id
+      gameSession.winner = opponent.playerId
       await handleEndOfGame(ws, player, gameSession, opponent, opponentWs, false)
       gameSession.player1 = undefined
       gameSession.player2 = undefined
     }
 
-    if (gameSession.player1 && gameSession.player1 === player.id) {
+    if (gameSession.player1 && gameSession.player1 === player.playerId) {
       gameSession.player1 = undefined
     } else {
       gameSession.player2 = undefined
     }
 
     if (gameSession.type === GameSessionType.Computer && opponent) {
-      await redisService.deletePlayer(opponent.id)
+      await redisService.deletePlayer(opponent.playerId)
       gameSession.player2 = undefined
     }
 
@@ -335,10 +345,10 @@ export async function handleRematchGame(ws: WebSocket, player: Player, gameSessi
     return
   }
 
-  webScoketHelpers.sendGameboardData(ws, await redisService.getGameboard(player.id))
+  webScoketHelpers.sendGameboardData(ws, await redisService.getGameboard(player.playerId))
   webScoketHelpers.sendGameboardData(
     ws,
-    await redisService.getGameboard(player.id, 'attack'),
+    await redisService.getGameboard(player.playerId, 'attack'),
     'attack'
   )
 }

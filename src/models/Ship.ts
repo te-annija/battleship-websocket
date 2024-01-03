@@ -10,7 +10,7 @@ import ShipPosition from './ShipPosition.js'
  */
 export default class Ship {
   /** The unique identifier for the ship. */
-  id: string
+  shipId: string
 
   /** The name of the ship. */
   name: string
@@ -28,14 +28,14 @@ export default class Ship {
   isOnBoard: boolean
 
   constructor(
-    id: string,
+    shipId: string,
     name: string,
     size: number,
     hits: number = 0, // No attacks on the ship initially
     position: ShipPosition = new ShipPosition(),
     isOnBoard: boolean = false
   ) {
-    this.id = id
+    this.shipId = shipId
     this.name = name
     this.size = size
     this.hits = hits

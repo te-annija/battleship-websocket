@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "es2016",
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "outDir": "dist",
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "*": ["src/*"]
+    },
+    "noImplicitAny": true,
+    "skipLibCheck": true,
+    "allowJs": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", ".vscode"]
+}

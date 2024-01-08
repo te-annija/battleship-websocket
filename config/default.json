@@ -1,0 +1,10 @@
+{
+  "battleships": [
+    { "name": "carrier", "size": 5, "count": 0 },
+    { "name": "battleship", "size": 4, "count": 1 },
+    { "name": "cruiser", "size": 3, "count": 2 },
+    { "name": "submarine", "size": 2, "count": 3 },
+    { "name": "destroyer", "size": 1, "count": 4 }
+  ],
+  "boardSize": 10
+}

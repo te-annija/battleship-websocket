@@ -277,7 +277,8 @@ export async function handleEndOfGame(
   if (opponent) {
     await redisService.setGameboard(opponent.playerId, new Gameboard())
     await redisService.setGameboard(opponent.playerId, new Gameboard(), 'attack')
-    player.isReady = false
+    opponent.isReady = false
+    await redisService.setPlayer(opponent)
   }
   return true
 }

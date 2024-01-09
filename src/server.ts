@@ -244,14 +244,18 @@ wss.on('connection', async (ws: WebSocket) => {
               await generateRandomString('gameSession'),
               message.data
             )
+            player.isReady = true
+
             availiableSessions.push(gameSession.gameSessionId)
+            /**Save to redis */
             await redisService.setPlayer(player)
             await redisService.setGameSession(gameSession)
-            /**Save to redis */
+            webScoketHelpers.sendPlayerData(ws, player)
             waitAndRetry(player, gameSession.gameSessionId)
           } else {
             await handleJoinGameOnline(player, gameSession)
           }
+
           break
         }
         case 'join-game-friend': {
